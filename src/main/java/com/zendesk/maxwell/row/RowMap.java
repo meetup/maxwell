@@ -11,7 +11,6 @@ import org.slf4j.LoggerFactory;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.Serializable;
-import java.io.StringWriter;
 import java.security.NoSuchAlgorithmException;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -250,8 +249,8 @@ public class RowMap implements Serializable {
 			JsonGenerator g,
 			boolean includeNullField
 	) throws IOException, NoSuchAlgorithmException {
-		StringWriter writer=new StringWriter();
-		JsonGenerator json=jsonFactory.createGenerator(new StringWriter());
+		ByteArrayOutputStream bos =new ByteArrayOutputStream();
+		JsonGenerator json=jsonFactory.createGenerator(bos);
 		json.writeStartObject();
 		for (String key : data.keySet()) {
 			Object value = data.get(key);
@@ -277,7 +276,7 @@ public class RowMap implements Serializable {
 		}
 		json.writeEndObject();
 		json.close();
-		g.writeStringField(jsonMapName, writer.toString());
+		g.writeStringField(jsonMapName, bos.toString());
 	}
 
 
