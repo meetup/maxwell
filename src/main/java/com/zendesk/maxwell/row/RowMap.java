@@ -276,7 +276,6 @@ public class RowMap implements Serializable {
 			}
 		}
 		json.writeEndObject();
-		json.flush();
 		json.close();
 		g.writeStringField(jsonMapName, writer.toString());
 	}
