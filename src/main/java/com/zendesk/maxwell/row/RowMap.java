@@ -252,7 +252,7 @@ public class RowMap implements Serializable {
 	) throws IOException, NoSuchAlgorithmException {
 		StringWriter writer=new StringWriter();
 		JsonGenerator json=jsonFactory.createGenerator(new StringWriter());
-
+		json.writeStartObject();
 		for (String key : data.keySet()) {
 			Object value = data.get(key);
 
@@ -275,6 +275,7 @@ public class RowMap implements Serializable {
 				json.writeObjectField(key, value);
 			}
 		}
+		json.writeEndObject();
 		json.flush();
 		json.close();
 		g.writeStringField(jsonMapName, writer.toString());
