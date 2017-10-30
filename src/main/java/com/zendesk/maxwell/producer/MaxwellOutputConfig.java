@@ -19,6 +19,7 @@ public class MaxwellOutputConfig {
 	public String secretKey;
 	public String prefixString;
 	public boolean includesTimeStampMs;
+	public boolean includesActualTimeStampMs;
 
 	public MaxwellOutputConfig() {
 		this.includesBinlogPosition = false;
@@ -34,6 +35,7 @@ public class MaxwellOutputConfig {
 		this.flattenData = false;
 		this.prefixString = "";
 		this.includesTimeStampMs = false;
+		this.includesActualTimeStampMs = false;
 	}
 
 	public boolean encryptionEnabled() {

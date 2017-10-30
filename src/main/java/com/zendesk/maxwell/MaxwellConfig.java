@@ -446,6 +446,7 @@ public class MaxwellConfig extends AbstractConfig {
 		outputConfig.flattenData = fetchBooleanOption("output_flatten_data", options, properties, false);
 		outputConfig.prefixString = fetchOption("output_prefix_string", options, properties, "");
 		outputConfig.includesTimeStampMs = fetchBooleanOption("output_timestamp_ms", options, properties, false);
+		outputConfig.includesActualTimeStampMs = fetchBooleanOption("output_actual_timestamp_ms", options, properties, false);
 
 		String encryptionMode = fetchOption("encryption", options, properties, "none");
 		switch (encryptionMode) {

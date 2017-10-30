@@ -297,6 +297,9 @@ public class RowMap implements Serializable {
 		if (outputConfig.includesTimeStampMs) {
 			g.writeNumberField(outputConfig.prefixString + "tsm", this.timestampMillis);
 		}
+		if (outputConfig.includesActualTimeStampMs) {
+			g.writeNumberField(outputConfig.prefixString + "atsm", System.currentTimeMillis());
+		}
 
 		if ( outputConfig.includesCommitInfo ) {
 			if ( this.xid != null )
