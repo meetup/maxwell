@@ -38,13 +38,13 @@ public class InflightMessageListTest {
 
 		Position ret;
 
-		ret = list.completeMessage(p1).position;
+		ret = list.completeTXMessage(1).position;
 		assert(ret.equals(p1));
 
-		ret = list.completeMessage(p2).position;
+		ret = list.completeTXMessage(2).position;
 		assert(ret.equals(p2));
 
-		ret = list.completeMessage(p3).position;
+		ret = list.completeTXMessage(3).position;
 		assert(ret.equals(p3));
 
 		assert(list.size() == 0);
@@ -55,15 +55,15 @@ public class InflightMessageListTest {
 		setupWithInflightRequestTimeout(0, 0.1);
 
 		Position ret;
-		InflightMessageList.InflightMessage m;
+		InflightMessageList.InflightTXMessage m;
 
-		m = list.completeMessage(p3);
+		m = list.completeTXMessage(3);
 		assert(m == null);
 
-		m = list.completeMessage(p2);
+		m = list.completeTXMessage(2);
 		assert(m == null);
 
-		ret = list.completeMessage(p1).position;
+		ret = list.completeTXMessage(1).position;
 		assertEquals(p3, ret);
 	}
 
@@ -72,11 +72,11 @@ public class InflightMessageListTest {
 		// Given
 		long inflightRequestTimeout = 100;
 		setupWithInflightRequestTimeout(inflightRequestTimeout, 0.1);
-		list.completeMessage(p2);
+		list.completeTXMessage(2);
 		Thread.sleep(inflightRequestTimeout + 5);
 
 		// When
-		list.completeMessage(p3);
+		list.completeTXMessage(3);
 
 		// Then
 		verify(context).terminate(captor.capture());
@@ -87,10 +87,10 @@ public class InflightMessageListTest {
 	public void testMaxwellWillNotTerminateWhenHeadOfInflightMsgListIsStuckAndCheckTurnedOff() throws InterruptedException {
 		// Given
 		setupWithInflightRequestTimeout(0, 0.1);
-		list.completeMessage(p2);
+		list.completeTXMessage(2);
 
 		// When
-		list.completeMessage(p3);
+		list.completeTXMessage(3);
 
 		// Then
 		verify(context, never()).terminate(any(RuntimeException.class));
@@ -101,11 +101,11 @@ public class InflightMessageListTest {
 		// Given
 		long inflightRequestTimeout = 100;
 		setupWithInflightRequestTimeout(inflightRequestTimeout, 0.1);
-		list.completeMessage(p1);
+		list.completeTXMessage(1);
 		Thread.sleep(inflightRequestTimeout + 5);
 
 		// When
-		list.completeMessage(p3);
+		list.completeTXMessage(3);
 
 		// Then
 		verify(context, never()).terminate(any(RuntimeException.class));
@@ -116,11 +116,11 @@ public class InflightMessageListTest {
 		// Given
 		long inflightRequestTimeout = 100;
 		setupWithInflightRequestTimeout(inflightRequestTimeout, 0.9);
-		list.completeMessage(p2);
+		list.completeTXMessage(2);
 		Thread.sleep(inflightRequestTimeout + 5);
 
 		// When
-		list.completeMessage(p3);
+		list.completeTXMessage(3);
 
 		// Then
 		verify(context, never()).terminate(any(RuntimeException.class));
@@ -137,7 +137,7 @@ public class InflightMessageListTest {
 
 		long wait = 500;
 		Thread.sleep(wait);
-		list.completeMessage(p1);
+		list.completeTXMessage(1);
 
 		add.join();
 		assertThat("Should never exceed capacity", list.size(), is(capacity));
@@ -153,7 +153,7 @@ public class InflightMessageListTest {
 		public void run() {
 			start = System.currentTimeMillis();
 			try {
-				list.addMessage(p4);
+				list.addTXMessage(4, p4);
 			} catch (InterruptedException e) {
 				e.printStackTrace();
 			}
@@ -167,8 +167,8 @@ public class InflightMessageListTest {
 		config.producerAckTimeout = timeout;
 		when(context.getConfig()).thenReturn(config);
 		list = new InflightMessageList(context, capacity, completePercentageThreshold);
-		list.addMessage(p1);
-		list.addMessage(p2);
-		list.addMessage(p3);
+		list.addTXMessage(1, p1);
+		list.addTXMessage(2, p2);
+		list.addTXMessage(3, p3);
 	}
 }
