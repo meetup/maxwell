@@ -1,13 +1,13 @@
 ### Download
 ***
-- Download binary distro: [https://github.com/zendesk/maxwell/releases/download/v1.10.8/maxwell-1.10.8.tar.gz](https://github.com/zendesk/maxwell/releases/download/v1.10.8/maxwell-1.10.8.tar.gz)
+- Download binary distro: [https://github.com/zendesk/maxwell/releases/download/v1.12.0/maxwell-1.12.0.tar.gz](https://github.com/zendesk/maxwell/releases/download/v1.12.0/maxwell-1.12.0.tar.gz)
 - Sources and bug tracking is available on github: [https://github.com/zendesk/maxwell](https://github.com/zendesk/maxwell)
 - Obligatory copy/paste to terminal:
 
 ```
-curl -sLo - https://github.com/zendesk/maxwell/releases/download/v1.10.8/maxwell-1.10.8.tar.gz \
+curl -sLo - https://github.com/zendesk/maxwell/releases/download/v1.12.0/maxwell-1.12.0.tar.gz \
        | tar zxvf -
-cd maxwell-1.10.8
+cd maxwell-1.12.0
 ```
 
 or get the docker image:
@@ -134,4 +134,17 @@ docker run -it --rm zendesk/maxwell bin/maxwell --user=$MYSQL_USERNAME --passwor
 ```
 bin/maxwell --user='maxwell' --password='XXXXXX' --host='127.0.0.1' \
     --producer=rabbitmq --rabbitmq_host='rabbitmq.hostname'
+```
+
+### Redis Producer
+
+```
+bin/maxwell --user='maxwell' --password='XXXXXX' --host='127.0.0.1' \
+    --producer=redis --redis_host=redis.hostname
+```
+
+(or docker):
+
+```
+docker run -it --rm zendesk/maxwell bin/maxwell --user=$MYSQL_USERNAME --password=$MYSQL_PASSWORD --host=$MYSQL_HOST --producer=redis --redis_host=$REDIS_HOST
 ```

@@ -31,7 +31,8 @@ public class BinlogConnectorReplicator extends AbstractReplicator implements Rep
 
 	private final LinkedBlockingDeque<BinlogConnectorEvent> queue = new LinkedBlockingDeque<>(20);
 
-	protected BinlogConnectorEventListener binlogEventListener;
+	private BinlogConnectorEventListener binlogEventListener;
+	private BinlogConnectorLifecycleListener binlogLifecycleListener;
 
 	private final BinaryLogClient client;
 
@@ -76,9 +77,11 @@ public class BinlogConnectorReplicator extends AbstractReplicator implements Rep
 			EventDeserializer.CompatibilityMode.CHAR_AND_BINARY_AS_BYTE_ARRAY);
 		this.client.setEventDeserializer(eventDeserializer);
 		this.binlogEventListener = new BinlogConnectorEventListener(client, queue, metrics);
+		this.binlogLifecycleListener = new BinlogConnectorLifecycleListener();
 
 		this.client.setBlocking(!stopOnEOF);
 		this.client.registerEventListener(binlogEventListener);
+		this.client.registerLifecycleListener(binlogLifecycleListener);
 		this.client.setServerId(replicaServerID.intValue());
 
 		this.stopOnEOF = stopOnEOF;
@@ -177,7 +180,9 @@ public class BinlogConnectorReplicator extends AbstractReplicator implements Rep
 
 					if ( table != null && shouldOutputEvent(table.getDatabase(), table.getName(), filter) ) {
 						for ( RowMap r : event.jsonMaps(table, lastHeartbeatPosition) )
-							buffer.add(r);
+							if (shouldOutputRowMap(table.getDatabase(), table.getName(), r, filter)) {
+								buffer.add(r);
+							}
 					}
 
 					break;
@@ -201,6 +206,8 @@ public class BinlogConnectorReplicator extends AbstractReplicator implements Rep
 						// RDS heartbeat events take the following form:
 						// INSERT INTO mysql.rds_heartbeat2(id, value) values (1,1483041015005) ON DUPLICATE KEY UPDATE value = 1483041015005
 						// We don't need to process them, just ignore
+					} else if (sql.toUpperCase().startsWith("DROP TEMPORARY TABLE")) {
+						// Ignore temporary table drop statements inside transactions
 					} else {
 						LOGGER.warn("Unhandled QueryEvent inside transaction: " + qe);
 					}
