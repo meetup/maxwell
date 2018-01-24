@@ -1,11 +1,10 @@
 FROM maven:3.5-jdk-8
-ENV MAXWELL_VERSION=1.10.8 KAFKA_VERSION=0.10.1.0
-ENV DEBIAN_FRONTEND noninteractive
+ENV MAXWELL_VERSION=1.12.0 KAFKA_VERSION=0.11.0.1
 
 COPY . /workspace
 
 RUN apt-get update \
-    && apt-get upgrade -y \
+    && apt-get -y upgrade \
     && apt-get install -y build-essential \
     && cd /workspace \
     && KAFKA_VERSION=$KAFKA_VERSION make package MAXWELL_VERSION=$MAXWELL_VERSION \
@@ -17,4 +16,4 @@ RUN apt-get update \
 
 WORKDIR /app
 
-CMD bin/maxwell --user=$MYSQL_USERNAME --password=$MYSQL_PASSWORD --host=$MYSQL_HOST --producer=kafka --kafka.bootstrap.servers=$KAFKA_HOST:$KAFKA_PORT $MAXWELL_OPTIONS
+CMD [ "/bin/bash", "-c", "bin/maxwell --user=$MYSQL_USERNAME --password=$MYSQL_PASSWORD --host=$MYSQL_HOST --producer=kafka --kafka.bootstrap.servers=$KAFKA_HOST:$KAFKA_PORT $MAXWELL_OPTIONS" ]

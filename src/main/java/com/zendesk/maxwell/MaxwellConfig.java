@@ -37,9 +37,10 @@ public class MaxwellConfig extends AbstractConfig {
 
 	public String databaseName;
 
-	public String includeDatabases, excludeDatabases, includeTables, excludeTables, excludeColumns, blacklistDatabases, blacklistTables;
+	public String includeDatabases, excludeDatabases, includeTables, excludeTables, excludeColumns, blacklistDatabases, blacklistTables, includeColumnValues;
 
 	public ProducerFactory producerFactory; // producerFactory has precedence over producerType
+	public final Properties customProducerProperties;
 	public String producerType;
 
 	public final Properties kafkaProperties;
@@ -59,6 +60,8 @@ public class MaxwellConfig extends AbstractConfig {
 
 	public String kinesisStream;
 	public boolean kinesisMd5Keys;
+
+	public String sqsQueueUri;
 
 	public String pubsubProjectId;
 	public String pubsubTopic;
@@ -102,9 +105,18 @@ public class MaxwellConfig extends AbstractConfig {
 	public String rabbitmqExchange;
 	public String rabbitmqExchangeType;
 	public boolean rabbitMqExchangeDurable;
+	public boolean rabbitMqExchangeAutoDelete;
 	public String rabbitmqRoutingKeyTemplate;
+	public boolean rabbitmqMessagePersistent;
+
+	public String redisHost;
+	public int redisPort;
+	public String redisAuth;
+	public int redisDatabase;
+	public String redisPubChannel;
 
 	public MaxwellConfig() { // argv is only null in tests
+		this.customProducerProperties = new Properties();
 		this.kafkaProperties = new Properties();
 		this.replayMode = false;
 		this.replicationMysql = new MaxwellMysqlConfig();
@@ -152,7 +164,8 @@ public class MaxwellConfig extends AbstractConfig {
 
 		parser.accepts("__separator_3");
 
-		parser.accepts( "producer", "producer type: stdout|file|kafka|kinesis|pubsub" ).withRequiredArg();
+		parser.accepts( "producer", "producer type: stdout|file|kafka|kinesis|pubsub|sqs|rabbitmq|redis" ).withRequiredArg();
+		parser.accepts( "custom_producer.factory", "fully qualified custom producer factory class" ).withRequiredArg();
 		parser.accepts( "producer_ack_timeout", "producer message acknowledgement timeout" ).withRequiredArg();
 		parser.accepts( "output_file", "output file for 'file' producer" ).withRequiredArg();
 
@@ -166,16 +179,16 @@ public class MaxwellConfig extends AbstractConfig {
 		parser.accepts( "kafka_partition_columns", "[deprecated]").withRequiredArg();
 		parser.accepts( "kafka_partition_by_fallback", "[deprecated]").withRequiredArg();
 		parser.accepts( "kafka.bootstrap.servers", "at least one kafka server, formatted as HOST:PORT[,HOST:PORT]" ).withRequiredArg();
-		parser.accepts( "kafka_partition_hash", "default|murmur3, hash function for partitioning").withRequiredArg();
-		parser.accepts( "kafka_topic", "optionally provide a topic name to push to. default: maxwell").withRequiredArg();
-		parser.accepts( "kafka_key_format", "how to format the kafka key; array|hash").withRequiredArg();
-		parser.accepts( "kafka_version", "use kafka 0.8, 0.9, 0.10, 0.10.1, or 0.10.2 producer (default 0.9)").withRequiredArg();
+		parser.accepts( "kafka_partition_hash", "default|murmur3, hash function for partitioning" ).withRequiredArg();
+		parser.accepts( "kafka_topic", "optionally provide a topic name to push to. default: maxwell" ).withRequiredArg();
+		parser.accepts( "kafka_key_format", "how to format the kafka key; array|hash" ).withRequiredArg();
 
-		parser.accepts( "kinesis_stream", "kinesis stream name").withRequiredArg();
+		parser.accepts( "kinesis_stream", "kinesis stream name" ).withOptionalArg();
+		parser.accepts( "sqs_queue_uri", "SQS Queue uri" ).withRequiredArg();
 
-		parser.accepts( "pubsub_project_id", "provide a google cloud platform project id associated with the pubsub topic").withRequiredArg();
-		parser.accepts( "pubsub_topic", "optionally provide a pubsub topic to push to. default: maxwell").withRequiredArg();
-		parser.accepts( "ddl_pubsub_topic", "optionally provide an alternate pubsub topic to push DDL records to. default: pubsub_topic").withRequiredArg();
+		parser.accepts( "pubsub_project_id", "provide a google cloud platform project id associated with the pubsub topic" ).withRequiredArg();
+		parser.accepts( "pubsub_topic", "optionally provide a pubsub topic to push to. default: maxwell" ).withRequiredArg();
+		parser.accepts( "ddl_pubsub_topic", "optionally provide an alternate pubsub topic to push DDL records to. default: pubsub_topic" ).withRequiredArg();
 
 		parser.accepts("__separator_4");
 
@@ -186,9 +199,9 @@ public class MaxwellConfig extends AbstractConfig {
 		parser.accepts( "output_server_id", "produced records include server_id; [true|false]. default: false" ).withOptionalArg();
 		parser.accepts( "output_thread_id", "produced records include thread_id; [true|false]. default: false" ).withOptionalArg();
 		parser.accepts( "output_ddl", "produce DDL records to ddl_kafka_topic [true|false]. default: false" ).withOptionalArg();
-		parser.accepts( "ddl_kafka_topic", "optionally provide an alternate topic to push DDL records to. default: kafka_topic").withRequiredArg();
-		parser.accepts("secret_key", "The secret key for the AES encryption").withRequiredArg();
-		parser.accepts("encrypt", "encryption mode: [none|data|all]. default: none").withRequiredArg();
+		parser.accepts( "ddl_kafka_topic", "optionally provide an alternate topic to push DDL records to. default: kafka_topic" ).withRequiredArg();
+		parser.accepts("secret_key", "The secret key for the AES encryption" ).withRequiredArg();
+		parser.accepts("encrypt", "encryption mode: [none|data|all]. default: none" ).withRequiredArg();
 
 		parser.accepts( "__separator_5" );
 
@@ -196,25 +209,26 @@ public class MaxwellConfig extends AbstractConfig {
 
 		parser.accepts( "__separator_6" );
 
-		parser.accepts( "replica_server_id", "server_id that maxwell reports to the master.  See docs for full explanation.").withRequiredArg();
-		parser.accepts( "client_id", "unique identifier for this maxwell replicator").withRequiredArg();
-		parser.accepts( "schema_database", "database name for maxwell state (schema and binlog position)").withRequiredArg();
-		parser.accepts( "max_schemas", "deprecated.").withRequiredArg();
-		parser.accepts( "init_position", "initial binlog position, given as BINLOG_FILE:POSITION:HEARTBEAT").withRequiredArg();
-		parser.accepts( "replay", "replay mode, don't store any information to the server").withOptionalArg();
-		parser.accepts( "master_recovery", "(experimental) enable master position recovery code").withOptionalArg();
-		parser.accepts( "gtid_mode", "(experimental) enable gtid mode").withOptionalArg();
-		parser.accepts( "ignore_producer_error", "Maxwell will be terminated on kafka/kinesis errors when false. Otherwise, those producer errors are only logged. Default to true").withOptionalArg();
+		parser.accepts( "replica_server_id", "server_id that maxwell reports to the master.  See docs for full explanation. ").withRequiredArg();
+		parser.accepts( "client_id", "unique identifier for this maxwell replicator" ).withRequiredArg();
+		parser.accepts( "schema_database", "database name for maxwell state (schema and binlog position)" ).withRequiredArg();
+		parser.accepts( "max_schemas", "deprecated." ).withRequiredArg();
+		parser.accepts( "init_position", "initial binlog position, given as BINLOG_FILE:POSITION:HEARTBEAT" ).withRequiredArg();
+		parser.accepts( "replay", "replay mode, don't store any information to the server" ).withOptionalArg();
+		parser.accepts( "master_recovery", "(experimental) enable master position recovery code" ).withOptionalArg();
+		parser.accepts( "gtid_mode", "(experimental) enable gtid mode" ).withOptionalArg();
+		parser.accepts( "ignore_producer_error", "Maxwell will be terminated on kafka/kinesis errors when false. Otherwise, those producer errors are only logged. Default to true" ).withOptionalArg();
 
 		parser.accepts( "__separator_7" );
 
-		parser.accepts( "include_dbs", "include these databases, formatted as include_dbs=db1,db2").withRequiredArg();
-		parser.accepts( "exclude_dbs", "exclude these databases, formatted as exclude_dbs=db1,db2").withRequiredArg();
-		parser.accepts( "include_tables", "include these tables, formatted as include_tables=db1,db2").withRequiredArg();
-		parser.accepts( "exclude_tables", "exclude these tables, formatted as exclude_tables=tb1,tb2").withRequiredArg();
+		parser.accepts( "include_dbs", "include these databases, formatted as include_dbs=db1,db2" ).withRequiredArg();
+		parser.accepts( "exclude_dbs", "exclude these databases, formatted as exclude_dbs=db1,db2" ).withRequiredArg();
+		parser.accepts( "include_tables", "include these tables, formatted as include_tables=db1,db2" ).withRequiredArg();
+		parser.accepts( "exclude_tables", "exclude these tables, formatted as exclude_tables=tb1,tb2" ).withRequiredArg();
 		parser.accepts( "exclude_columns", "exclude these columns, formatted as exclude_columns=col1,col2" ).withRequiredArg();
-		parser.accepts( "blacklist_dbs", "ignore data AND schema changes to these databases, formatted as blacklist_dbs=db1,db2. See the docs for details before setting this!").withRequiredArg();
-		parser.accepts( "blacklist_tables", "ignore data AND schema changes to these tables, formatted as blacklist_tables=tb1,tb2. See the docs for details before setting this!").withRequiredArg();
+		parser.accepts( "blacklist_dbs", "ignore data AND schema changes to these databases, formatted as blacklist_dbs=db1,db2. See the docs for details before setting this!" ).withRequiredArg();
+		parser.accepts( "blacklist_tables", "ignore data AND schema changes to these tables, formatted as blacklist_tables=tb1,tb2. See the docs for details before setting this!" ).withRequiredArg();
+		parser.accepts( "include_column_values", "include only rows with these values formatted as include_column_values=C=x,D=y" ).withRequiredArg();
 
 		parser.accepts( "__separator_8" );
 
@@ -225,9 +239,19 @@ public class MaxwellConfig extends AbstractConfig {
 		parser.accepts( "rabbitmq_exchange", "Name of exchange for rabbitmq publisher" ).withRequiredArg();
 		parser.accepts( "rabbitmq_exchange_type", "Exchange type for rabbitmq" ).withRequiredArg();
 		parser.accepts( "rabbitmq_exchange_durable", "Exchange durability. Default is disabled" ).withOptionalArg();
+		parser.accepts( "rabbitmq_exchange_autodelete", "If set, the exchange is deleted when all queues have finished using it. Defaults to false" ).withOptionalArg();
 		parser.accepts( "rabbitmq_routing_key_template", "A string template for the routing key, '%db%' and '%table%' will be substituted. Default is '%db%.%table%'." ).withRequiredArg();
+		parser.accepts( "rabbitmq_message_persistent", "Message persistence. Defaults to false" ).withOptionalArg();
 
 		parser.accepts( "__separator_9" );
+
+		parser.accepts( "redis_host", "Host of Redis server" ).withRequiredArg();
+		parser.accepts( "redis_port", "Port of Redis server" ).withRequiredArg();
+		parser.accepts( "redis_auth", "Authentication key for a password-protected Redis server" ).withRequiredArg();
+		parser.accepts( "redis_database", "Database of Redis server" ).withRequiredArg();
+		parser.accepts( "redis_pub_channel", "Redis Pub/Sub channel for publishing records" ).withRequiredArg();
+
+		parser.accepts( "__separator_10" );
 
 		parser.accepts( "metrics_prefix", "the prefix maxwell will apply to all metrics" ).withRequiredArg();
 		parser.accepts( "metrics_type", "how maxwell metrics will be reported, at least one of slf4j|jmx|http|datadog" ).withRequiredArg();
@@ -243,9 +267,9 @@ public class MaxwellConfig extends AbstractConfig {
 		parser.accepts( "http_diagnostic", "enable http diagnostic endpoint: true|false. default: false" ).withOptionalArg();
 		parser.accepts( "http_diagnostic_timeout", "the http diagnostic response timeout in ms when http_diagnostic=true. default: 10000" ).withRequiredArg();
 
-		parser.accepts( "__separator_10" );
+		parser.accepts( "__separator_11" );
 
-		parser.accepts( "help", "display help").forHelp();
+		parser.accepts( "help", "display help" ).forHelp();
 
 
 		BuiltinHelpFormatter helpFormatter = new BuiltinHelpFormatter(200, 4) {
@@ -305,6 +329,7 @@ public class MaxwellConfig extends AbstractConfig {
 		this.databaseName       = fetchOption("schema_database", options, properties, "maxwell");
 		this.maxwellMysql.database = this.databaseName;
 
+		this.producerFactory    = fetchProducerFactory(options, properties);
 		this.producerType       = fetchOption("producer", options, properties, "stdout");
 		this.producerAckTimeout = fetchLongOption("producer_ack_timeout", options, properties, 0L);
 		this.bootstrapperType   = fetchOption("bootstrapper", options, properties, "async");
@@ -331,7 +356,15 @@ public class MaxwellConfig extends AbstractConfig {
 		this.rabbitmqExchange       = fetchOption("rabbitmq_exchange", options, properties, "maxwell");
 		this.rabbitmqExchangeType   = fetchOption("rabbitmq_exchange_type", options, properties, "fanout");
 		this.rabbitMqExchangeDurable = fetchBooleanOption("rabbitmq_exchange_durable", options, properties, false);
+		this.rabbitMqExchangeAutoDelete = fetchBooleanOption("rabbitmq_exchange_autodelete", options, properties, false);
 		this.rabbitmqRoutingKeyTemplate   = fetchOption("rabbitmq_routing_key_template", options, properties, "%db%.%table%");
+		this.rabbitmqMessagePersistent    = fetchBooleanOption("rabbitmq_message_persistent", options, properties, false);
+
+		this.redisHost			= fetchOption("redis_host", options, properties, "localhost");
+		this.redisPort			= Integer.parseInt(fetchOption("redis_port", options, properties, "6379"));
+		this.redisAuth			= fetchOption("redis_auth", options, properties, null);
+		this.redisDatabase		= Integer.parseInt(fetchOption("redis_database", options, properties, "0"));
+		this.redisPubChannel	= fetchOption("redis_pub_channel", options, properties, "maxwell");
 
 		String kafkaBootstrapServers = fetchOption("kafka.bootstrap.servers", options, properties, null);
 		if ( kafkaBootstrapServers != null )
@@ -340,7 +373,9 @@ public class MaxwellConfig extends AbstractConfig {
 		if ( properties != null ) {
 			for (Enumeration<Object> e = properties.keys(); e.hasMoreElements(); ) {
 				String k = (String) e.nextElement();
-				if (k.startsWith("kafka.")) {
+				if (k.startsWith("custom_producer.")) {
+					this.customProducerProperties.setProperty(k.replace("custom_producer.", ""), properties.getProperty(k));
+				} else if (k.startsWith("kafka.")) {
 					if (k.equals("kafka.bootstrap.servers") && kafkaBootstrapServers != null)
 						continue; // don't override command line bootstrap servers with config files'
 
@@ -371,6 +406,8 @@ public class MaxwellConfig extends AbstractConfig {
 		this.kinesisStream  = fetchOption("kinesis_stream", options, properties, null);
 		this.kinesisMd5Keys = fetchBooleanOption("kinesis_md5_keys", options, properties, false);
 
+		this.sqsQueueUri = fetchOption("sqs_queue_uri", options, properties, null);
+
 		this.outputFile = fetchOption("output_file", options, properties, null);
 
 		this.metricsPrefix = fetchOption("metrics_prefix", options, properties, "MaxwellMetrics");
@@ -399,12 +436,13 @@ public class MaxwellConfig extends AbstractConfig {
 		this.diagnosticConfig.enable = fetchBooleanOption("http_diagnostic", options, properties, false);
 		this.diagnosticConfig.timeout = fetchLongOption("http_diagnostic_timeout", options, properties, 10000L);
 
-		this.includeDatabases   = fetchOption("include_dbs", options, properties, null);
-		this.excludeDatabases   = fetchOption("exclude_dbs", options, properties, null);
-		this.includeTables      = fetchOption("include_tables", options, properties, null);
-		this.excludeTables      = fetchOption("exclude_tables", options, properties, null);
-		this.blacklistDatabases = fetchOption("blacklist_dbs", options, properties, null);
-		this.blacklistTables    = fetchOption("blacklist_tables", options, properties, null);
+		this.includeDatabases    = fetchOption("include_dbs", options, properties, null);
+		this.excludeDatabases    = fetchOption("exclude_dbs", options, properties, null);
+		this.includeTables       = fetchOption("include_tables", options, properties, null);
+		this.excludeTables       = fetchOption("exclude_tables", options, properties, null);
+		this.blacklistDatabases  = fetchOption("blacklist_dbs", options, properties, null);
+		this.blacklistTables     = fetchOption("blacklist_tables", options, properties, null);
+		this.includeColumnValues = fetchOption("include_column_values", options, properties, null);
 
 		if ( options != null && options.has("init_position")) {
 			String initPosition = (String) options.valueOf("init_position");
@@ -448,7 +486,7 @@ public class MaxwellConfig extends AbstractConfig {
 		outputConfig.includesTimeStampMs = fetchBooleanOption("output_timestamp_ms", options, properties, false);
 		outputConfig.includesActualTimeStampMs = fetchBooleanOption("output_actual_timestamp_ms", options, properties, false);
 
-		String encryptionMode = fetchOption("encryption", options, properties, "none");
+		String encryptionMode = fetchOption("encrypt", options, properties, "none");
 		switch (encryptionMode) {
 			case "none":
 				outputConfig.encryptionMode = EncryptionMode.ENCRYPT_NONE;
@@ -525,6 +563,8 @@ public class MaxwellConfig extends AbstractConfig {
 			usageForOptions("please specify --output_file=FILE to use the file producer", "--producer", "--output_file");
 		} else if ( this.producerType.equals("kinesis") && this.kinesisStream == null) {
 			usageForOptions("please specify a stream name for kinesis", "kinesis_stream");
+		} else if (this.producerType.equals("sqs") && this.sqsQueueUri == null) {
+			usageForOptions("please specify a queue uri for sqs", "sqs_queue_uri");
 		}
 
 		if ( !this.bootstrapperType.equals("async")
@@ -588,7 +628,8 @@ public class MaxwellConfig extends AbstractConfig {
 					includeTables,
 					excludeTables,
 					blacklistDatabases,
-					blacklistTables
+					blacklistTables,
+					includeColumnValues
 			);
 		} catch (MaxwellInvalidFilterException e) {
 			usage("Invalid filter options: " + e.getLocalizedMessage());
@@ -612,6 +653,24 @@ public class MaxwellConfig extends AbstractConfig {
 			return Pattern.compile(name.substring(1, name.length() - 1));
 		} else {
 			return Pattern.compile("^" + Pattern.quote(name) + "$");
+		}
+	}
+
+	protected ProducerFactory fetchProducerFactory(OptionSet options, Properties properties) {
+		String name = "custom_producer.factory";
+		String strOption = fetchOption(name, options, properties, null);
+		if ( strOption != null ) {
+			try {
+				Class<?> clazz = Class.forName(strOption);
+				return ProducerFactory.class.cast(clazz.newInstance());
+			} catch ( ClassNotFoundException e ) {
+				usageForOptions("Invalid value for " + name + ", class not found", "--" + name);
+			} catch ( IllegalAccessException | InstantiationException | ClassCastException e) {
+				usageForOptions("Invalid value for " + name + ", class instantiation error", "--" + name);
+			}
+			return null; // unreached
+		} else {
+			return null;
 		}
 	}
 }
