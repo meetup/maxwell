@@ -2,8 +2,9 @@ package com.zendesk.maxwell;
 
 import com.codahale.metrics.MetricRegistry;
 import com.codahale.metrics.health.HealthCheckRegistry;
-import com.zendesk.maxwell.producer.EncryptionMode;
+import com.github.shyiko.mysql.binlog.network.SSLMode;
 import com.zendesk.maxwell.monitoring.MaxwellDiagnosticContext;
+import com.zendesk.maxwell.producer.EncryptionMode;
 import com.zendesk.maxwell.producer.MaxwellOutputConfig;
 import com.zendesk.maxwell.producer.ProducerFactory;
 import com.zendesk.maxwell.replication.BinlogPosition;
@@ -13,14 +14,12 @@ import joptsimple.BuiltinHelpFormatter;
 import joptsimple.OptionDescriptor;
 import joptsimple.OptionParser;
 import joptsimple.OptionSet;
+import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.Enumeration;
-import java.util.List;
-import java.util.Map;
-import java.util.Properties;
+import java.util.*;
 import java.util.regex.Pattern;
 
 public class MaxwellConfig extends AbstractConfig {
@@ -77,6 +76,7 @@ public class MaxwellConfig extends AbstractConfig {
 	public HealthCheckRegistry healthCheckRegistry;
 
 	public int httpPort;
+	public String httpBindAddress;
 	public String httpPathPrefix;
 	public String metricsPrefix;
 	public String metricsReportingType;
@@ -87,6 +87,7 @@ public class MaxwellConfig extends AbstractConfig {
 	public String metricsDatadogHost;
 	public int metricsDatadogPort;
 	public Long metricsDatadogInterval;
+	public boolean metricsJvm;
 
 	public MaxwellDiagnosticContext.Config diagnosticConfig;
 
@@ -101,6 +102,7 @@ public class MaxwellConfig extends AbstractConfig {
 	public String rabbitmqUser;
 	public String rabbitmqPass;
 	public String rabbitmqHost;
+	public int rabbitmqPort;
 	public String rabbitmqVirtualHost;
 	public String rabbitmqExchange;
 	public String rabbitmqExchangeType;
@@ -108,12 +110,15 @@ public class MaxwellConfig extends AbstractConfig {
 	public boolean rabbitMqExchangeAutoDelete;
 	public String rabbitmqRoutingKeyTemplate;
 	public boolean rabbitmqMessagePersistent;
+	public boolean rabbitmqDeclareExchange;
 
 	public String redisHost;
 	public int redisPort;
 	public String redisAuth;
 	public int redisDatabase;
 	public String redisPubChannel;
+	public String redisListKey;
+	public String redisType;
 
 	public MaxwellConfig() { // argv is only null in tests
 		this.customProducerProperties = new Properties();
@@ -127,19 +132,21 @@ public class MaxwellConfig extends AbstractConfig {
 		this.bufferedProducerSize = 200;
 		this.metricRegistry = new MetricRegistry();
 		this.healthCheckRegistry = new HealthCheckRegistry();
+		this.outputConfig = new MaxwellOutputConfig();
 		setup(null, null); // setup defaults
 	}
 
 	public MaxwellConfig(String argv[]) {
 		this();
 		this.parse(argv);
-		this.validate();
 	}
 
 	protected OptionParser buildOptionParser() {
 		final OptionParser parser = new OptionParser();
 		parser.accepts( "config", "location of config file" ).withRequiredArg();
+		parser.accepts( "env_config_prefix", "prefix of env var based config, case insensitive" ).withRequiredArg();
 		parser.accepts( "log_level", "log level, one of DEBUG|INFO|WARN|ERROR" ).withRequiredArg();
+		parser.accepts( "daemon", "daemon, running maxwell as a daemon" ).withOptionalArg();
 
 		parser.accepts("__separator_1");
 
@@ -149,6 +156,10 @@ public class MaxwellConfig extends AbstractConfig {
 		parser.accepts( "password", "password for host" ).withRequiredArg();
 		parser.accepts( "jdbc_options", "additional jdbc connection options" ).withRequiredArg();
 		parser.accepts( "binlog_connector", "[deprecated]" ).withRequiredArg();
+
+		parser.accepts( "ssl", "enables SSL for all connections: DISABLED|PREFERRED|REQUIRED|VERIFY_CA|VERIFY_IDENTITY. default: DISABLED").withOptionalArg();
+		parser.accepts( "replication_ssl", "overrides SSL setting for binlog connection: DISABLED|PREFERRED|REQUIRED|VERIFY_CA|VERIFY_IDENTITY").withOptionalArg();
+		parser.accepts( "schema_ssl", "overrides SSL setting for schema capture connection: DISABLED|PREFERRED|REQUIRED|VERIFY_CA|VERIFY_IDENTITY").withOptionalArg();
 
 		parser.accepts("__separator_2");
 
@@ -173,8 +184,9 @@ public class MaxwellConfig extends AbstractConfig {
 		parser.accepts("producer_partition_columns",
 		    "with producer_partition_by=column, partition by the value of these columns.  "
 			+ "comma separated.").withRequiredArg();
-		parser.accepts( "producer_partition_by_fallback", "database|table|primary_key, fallback to this value when when sing 'column' partitioning and the columns are not present in the row").withRequiredArg();
+		parser.accepts( "producer_partition_by_fallback", "database|table|primary_key, fallback to this value when using 'column' partitioning and the columns are not present in the row").withRequiredArg();
 
+		parser.accepts( "kafka_version", "kafka client library version: 0.8.2.2|0.9.0.1|0.10.0.1|0.10.2.1|0.11.0.1").withRequiredArg();
 		parser.accepts( "kafka_partition_by", "[deprecated]").withRequiredArg();
 		parser.accepts( "kafka_partition_columns", "[deprecated]").withRequiredArg();
 		parser.accepts( "kafka_partition_by_fallback", "[deprecated]").withRequiredArg();
@@ -195,9 +207,11 @@ public class MaxwellConfig extends AbstractConfig {
 		parser.accepts( "output_binlog_position", "produced records include binlog position; [true|false]. default: false" ).withOptionalArg();
 		parser.accepts( "output_gtid_position", "produced records include gtid position; [true|false]. default: false" ).withOptionalArg();
 		parser.accepts( "output_commit_info", "produced records include commit and xid; [true|false]. default: true" ).withOptionalArg();
+		parser.accepts( "output_xoffset", "produced records include xoffset, option \"output_commit_info\" must be enabled; [true|false]. default: false" ).withOptionalArg();
 		parser.accepts( "output_nulls", "produced records include fields with NULL values [true|false]. default: true" ).withOptionalArg();
 		parser.accepts( "output_server_id", "produced records include server_id; [true|false]. default: false" ).withOptionalArg();
 		parser.accepts( "output_thread_id", "produced records include thread_id; [true|false]. default: false" ).withOptionalArg();
+		parser.accepts( "output_row_query", "produced records include query, binlog option \"binlog_rows_query_log_events\" must be enabled; [true|false]. default: false" ).withOptionalArg();
 		parser.accepts( "output_ddl", "produce DDL records to ddl_kafka_topic [true|false]. default: false" ).withOptionalArg();
 		parser.accepts( "ddl_kafka_topic", "optionally provide an alternate topic to push DDL records to. default: kafka_topic" ).withRequiredArg();
 		parser.accepts("secret_key", "The secret key for the AES encryption" ).withRequiredArg();
@@ -212,8 +226,8 @@ public class MaxwellConfig extends AbstractConfig {
 		parser.accepts( "replica_server_id", "server_id that maxwell reports to the master.  See docs for full explanation. ").withRequiredArg();
 		parser.accepts( "client_id", "unique identifier for this maxwell replicator" ).withRequiredArg();
 		parser.accepts( "schema_database", "database name for maxwell state (schema and binlog position)" ).withRequiredArg();
-		parser.accepts( "max_schemas", "deprecated." ).withRequiredArg();
-		parser.accepts( "init_position", "initial binlog position, given as BINLOG_FILE:POSITION:HEARTBEAT" ).withRequiredArg();
+		parser.accepts( "max_schemas", "[deprecated]" ).withRequiredArg();
+		parser.accepts( "init_position", "initial binlog position, given as BINLOG_FILE:POSITION[:HEARTBEAT]" ).withRequiredArg();
 		parser.accepts( "replay", "replay mode, don't store any information to the server" ).withOptionalArg();
 		parser.accepts( "master_recovery", "(experimental) enable master position recovery code" ).withOptionalArg();
 		parser.accepts( "gtid_mode", "(experimental) enable gtid mode" ).withOptionalArg();
@@ -235,6 +249,7 @@ public class MaxwellConfig extends AbstractConfig {
 		parser.accepts( "rabbitmq_user", "Username of Rabbitmq connection. Default is guest" ).withRequiredArg();
 		parser.accepts( "rabbitmq_pass", "Password of Rabbitmq connection. Default is guest" ).withRequiredArg();
 		parser.accepts( "rabbitmq_host", "Host of Rabbitmq machine" ).withRequiredArg();
+		parser.accepts( "rabbitmq_port", "Port of Rabbitmq machine" ).withRequiredArg();
 		parser.accepts( "rabbitmq_virtual_host", "Virtual Host of Rabbitmq" ).withRequiredArg();
 		parser.accepts( "rabbitmq_exchange", "Name of exchange for rabbitmq publisher" ).withRequiredArg();
 		parser.accepts( "rabbitmq_exchange_type", "Exchange type for rabbitmq" ).withRequiredArg();
@@ -242,6 +257,7 @@ public class MaxwellConfig extends AbstractConfig {
 		parser.accepts( "rabbitmq_exchange_autodelete", "If set, the exchange is deleted when all queues have finished using it. Defaults to false" ).withOptionalArg();
 		parser.accepts( "rabbitmq_routing_key_template", "A string template for the routing key, '%db%' and '%table%' will be substituted. Default is '%db%.%table%'." ).withRequiredArg();
 		parser.accepts( "rabbitmq_message_persistent", "Message persistence. Defaults to false" ).withOptionalArg();
+		parser.accepts( "rabbitmq_declare_exchange", "Should declare the exchange for rabbitmq publisher. Defaults to true" ).withOptionalArg();
 
 		parser.accepts( "__separator_9" );
 
@@ -250,6 +266,8 @@ public class MaxwellConfig extends AbstractConfig {
 		parser.accepts( "redis_auth", "Authentication key for a password-protected Redis server" ).withRequiredArg();
 		parser.accepts( "redis_database", "Database of Redis server" ).withRequiredArg();
 		parser.accepts( "redis_pub_channel", "Redis Pub/Sub channel for publishing records" ).withRequiredArg();
+		parser.accepts( "redis_list_key", "Redis LPUSH List Key for adding to a queue" ).withRequiredArg();
+		parser.accepts( "redis_type", "[pubsub|lpush] Selects either Redis Pub/Sub or LPUSH. Defaults to 'pubsub'" ).withRequiredArg();
 
 		parser.accepts( "__separator_10" );
 
@@ -258,6 +276,8 @@ public class MaxwellConfig extends AbstractConfig {
 		parser.accepts( "metrics_slf4j_interval", "the frequency metrics are emitted to the log, in seconds, when slf4j reporting is configured" ).withRequiredArg();
 		parser.accepts( "metrics_http_port", "[deprecated]" ).withRequiredArg();
 		parser.accepts( "http_port", "the port the server will bind to when http reporting is configured" ).withRequiredArg();
+		parser.accepts( "http_path_prefix", "the http path prefix when metrics_type includes http or diagnostic is enabled, default /" ).withRequiredArg();
+		parser.accepts( "http_bind_address", "the ip address the server will bind to when http reporting is configured" ).withRequiredArg();
 		parser.accepts( "metrics_datadog_type", "when metrics_type includes datadog this is the way metrics will be reported, one of udp|http" ).withRequiredArg();
 		parser.accepts( "metrics_datadog_tags", "datadog tags that should be supplied, e.g. tag1:value1,tag2:value2" ).withRequiredArg();
 		parser.accepts( "metrics_datadog_interval", "the frequency metrics are pushed to datadog, in seconds" ).withRequiredArg();
@@ -266,6 +286,7 @@ public class MaxwellConfig extends AbstractConfig {
 		parser.accepts( "metrics_datadog_port", "the port to publish metrics to when metrics_datadog_type = udp" ).withRequiredArg();
 		parser.accepts( "http_diagnostic", "enable http diagnostic endpoint: true|false. default: false" ).withOptionalArg();
 		parser.accepts( "http_diagnostic_timeout", "the http diagnostic response timeout in ms when http_diagnostic=true. default: 10000" ).withRequiredArg();
+		parser.accepts( "metrics_jvm", "enable jvm metrics: true|false. default: false" ).withRequiredArg();
 
 		parser.accepts( "__separator_11" );
 
@@ -288,14 +309,6 @@ public class MaxwellConfig extends AbstractConfig {
 		return parser;
 	}
 
-	private String parseLogLevel(String level) {
-		level = level.toLowerCase();
-		if ( !( level.equals("debug") || level.equals("info") || level.equals("warn") || level.equals("error")))
-			usageForOptions("unknown log level: " + level, "--log_level");
-		return level;
-	}
-
-
 	private void parse(String [] argv) {
 		OptionSet options = buildOptionParser().parse(argv);
 
@@ -305,6 +318,15 @@ public class MaxwellConfig extends AbstractConfig {
 			properties = parseFile((String) options.valueOf("config"), true);
 		} else {
 			properties = parseFile(DEFAULT_CONFIG_FILE, false);
+		}
+
+		String envConfigPrefix = fetchOption("env_config_prefix", options, properties, null);
+
+		if (envConfigPrefix != null) {
+			String prefix = envConfigPrefix.toLowerCase();
+			System.getenv().entrySet().stream()
+					.filter(map -> map.getKey().toLowerCase().startsWith(prefix))
+					.forEach(config -> properties.put(config.getKey().toLowerCase().replaceFirst(prefix, ""), config.getValue()));
 		}
 
 		if (options.has("help"))
@@ -349,22 +371,26 @@ public class MaxwellConfig extends AbstractConfig {
 		this.pubsubTopic 		 = fetchOption("pubsub_topic", options, properties, "maxwell");
 		this.ddlPubsubTopic  = fetchOption("ddl_pubsub_topic", options, properties, this.pubsubTopic);
 
-		this.rabbitmqHost           = fetchOption("rabbitmq_host", options, properties, "localhost");
-		this.rabbitmqUser			= fetchOption("rabbitmq_user", options, properties, "guest");
+		this.rabbitmqHost           		= fetchOption("rabbitmq_host", options, properties, "localhost");
+		this.rabbitmqPort 			= Integer.parseInt(fetchOption("rabbitmq_port", options, properties, "5672"));
+		this.rabbitmqUser 			= fetchOption("rabbitmq_user", options, properties, "guest");
 		this.rabbitmqPass			= fetchOption("rabbitmq_pass", options, properties, "guest");
-		this.rabbitmqVirtualHost    = fetchOption("rabbitmq_virtual_host", options, properties, "/");
-		this.rabbitmqExchange       = fetchOption("rabbitmq_exchange", options, properties, "maxwell");
-		this.rabbitmqExchangeType   = fetchOption("rabbitmq_exchange_type", options, properties, "fanout");
-		this.rabbitMqExchangeDurable = fetchBooleanOption("rabbitmq_exchange_durable", options, properties, false);
-		this.rabbitMqExchangeAutoDelete = fetchBooleanOption("rabbitmq_exchange_autodelete", options, properties, false);
-		this.rabbitmqRoutingKeyTemplate   = fetchOption("rabbitmq_routing_key_template", options, properties, "%db%.%table%");
-		this.rabbitmqMessagePersistent    = fetchBooleanOption("rabbitmq_message_persistent", options, properties, false);
+		this.rabbitmqVirtualHost    		= fetchOption("rabbitmq_virtual_host", options, properties, "/");
+		this.rabbitmqExchange       		= fetchOption("rabbitmq_exchange", options, properties, "maxwell");
+		this.rabbitmqExchangeType   		= fetchOption("rabbitmq_exchange_type", options, properties, "fanout");
+		this.rabbitMqExchangeDurable 		= fetchBooleanOption("rabbitmq_exchange_durable", options, properties, false);
+		this.rabbitMqExchangeAutoDelete 	= fetchBooleanOption("rabbitmq_exchange_autodelete", options, properties, false);
+		this.rabbitmqRoutingKeyTemplate   	= fetchOption("rabbitmq_routing_key_template", options, properties, "%db%.%table%");
+		this.rabbitmqMessagePersistent    	= fetchBooleanOption("rabbitmq_message_persistent", options, properties, false);
+		this.rabbitmqDeclareExchange		= fetchBooleanOption("rabbitmq_declare_exchange", options, properties, true);
 
 		this.redisHost			= fetchOption("redis_host", options, properties, "localhost");
 		this.redisPort			= Integer.parseInt(fetchOption("redis_port", options, properties, "6379"));
 		this.redisAuth			= fetchOption("redis_auth", options, properties, null);
 		this.redisDatabase		= Integer.parseInt(fetchOption("redis_database", options, properties, "0"));
 		this.redisPubChannel	= fetchOption("redis_pub_channel", options, properties, "maxwell");
+		this.redisListKey		= fetchOption("redis_list_key", options, properties, "maxwell");
+		this.redisType			= fetchOption("redis_type", options, properties, "pubsub");
 
 		String kafkaBootstrapServers = fetchOption("kafka.bootstrap.servers", options, properties, null);
 		if ( kafkaBootstrapServers != null )
@@ -388,21 +414,6 @@ public class MaxwellConfig extends AbstractConfig {
 		this.producerPartitionColumns = fetchOption("producer_partition_columns", options, properties, null);
 		this.producerPartitionFallback = fetchOption("producer_partition_by_fallback", options, properties, null);
 
-		if(this.kafkaPartitionKey != null && !this.kafkaPartitionKey.equals("database")) {
-			LOGGER.warn("kafka_partition_by is deprecated, please use producer_partition_by");
-			this.producerPartitionKey = this.kafkaPartitionKey;
-		}
-
-		if(this.kafkaPartitionColumns != null) {
-			LOGGER.warn("kafka_partition_columns is deprecated, please use producer_partition_columns");
-			this.producerPartitionColumns = this.kafkaPartitionColumns;
-		}
-
-		if(this.kafkaPartitionFallback != null) {
-			LOGGER.warn("kafka_partition_by_fallback is deprecated, please use producer_partition_by_fallback");
-			this.producerPartitionFallback = this.kafkaPartitionFallback;
-		}
-
 		this.kinesisStream  = fetchOption("kinesis_stream", options, properties, null);
 		this.kinesisMd5Keys = fetchBooleanOption("kinesis_md5_keys", options, properties, false);
 
@@ -421,7 +432,9 @@ public class MaxwellConfig extends AbstractConfig {
 		} else {
 			this.httpPort = Integer.parseInt(fetchOption("http_port", options, properties, "8080"));
 		}
+		this.httpBindAddress = fetchOption("http_bind_address", options, properties, null);
 		this.httpPathPrefix = fetchOption("http_path_prefix", options, properties, "/");
+
 		if (!this.httpPathPrefix.startsWith("/")) {
 			this.httpPathPrefix = "/" + this.httpPathPrefix;
 		}
@@ -431,6 +444,8 @@ public class MaxwellConfig extends AbstractConfig {
 		this.metricsDatadogHost = fetchOption("metrics_datadog_host", options, properties, "localhost");
 		this.metricsDatadogPort = Integer.parseInt(fetchOption("metrics_datadog_port", options, properties, "8125"));
 		this.metricsDatadogInterval = fetchLongOption("metrics_datadog_interval", options, properties, 60L);
+
+		this.metricsJvm = fetchBooleanOption("metrics_jvm", options, properties, false);
 
 		this.diagnosticConfig = new MaxwellDiagnosticContext.Config();
 		this.diagnosticConfig.enable = fetchBooleanOption("http_diagnostic", options, properties, false);
@@ -448,7 +463,7 @@ public class MaxwellConfig extends AbstractConfig {
 			String initPosition = (String) options.valueOf("init_position");
 			String[] initPositionSplit = initPosition.split(":");
 
-			if (initPositionSplit.length != 3)
+			if (initPositionSplit.length < 2)
 				usageForOptions("Invalid init_position: " + initPosition, "--init_position");
 
 			Long pos = 0L;
@@ -459,10 +474,12 @@ public class MaxwellConfig extends AbstractConfig {
 			}
 
 			Long lastHeartbeat = 0L;
-			try {
-				lastHeartbeat = Long.valueOf(initPositionSplit[2]);
-			} catch (NumberFormatException e) {
-				usageForOptions("Invalid init_position: " + initPosition, "--init_position");
+			if ( initPositionSplit.length > 2 ) {
+				try {
+					lastHeartbeat = Long.valueOf(initPositionSplit[2]);
+				} catch (NumberFormatException e) {
+					usageForOptions("Invalid init_position: " + initPosition, "--init_position");
+				}
 			}
 
 			this.initPosition = new Position(new BinlogPosition(pos, initPositionSplit[0]), lastHeartbeat);
@@ -472,13 +489,14 @@ public class MaxwellConfig extends AbstractConfig {
 		this.masterRecovery = fetchBooleanOption("master_recovery", options, properties, false);
 		this.ignoreProducerError = fetchBooleanOption("ignore_producer_error", options, properties, true);
 
-		this.outputConfig = new MaxwellOutputConfig();
 		outputConfig.includesBinlogPosition = fetchBooleanOption("output_binlog_position", options, properties, false);
 		outputConfig.includesGtidPosition = fetchBooleanOption("output_gtid_position", options, properties, false);
 		outputConfig.includesCommitInfo = fetchBooleanOption("output_commit_info", options, properties, true);
+		outputConfig.includesXOffset = fetchBooleanOption("output_xoffset", options, properties, true);
 		outputConfig.includesNulls = fetchBooleanOption("output_nulls", options, properties, true);
 		outputConfig.includesServerId = fetchBooleanOption("output_server_id", options, properties, false);
 		outputConfig.includesThreadId = fetchBooleanOption("output_thread_id", options, properties, false);
+		outputConfig.includesRowQuery = fetchBooleanOption("output_row_query", options, properties, false);
 		outputConfig.outputDDL	= fetchBooleanOption("output_ddl", options, properties, false);
 		this.excludeColumns     = fetchOption("exclude_columns", options, properties, null);
 		outputConfig.flattenData = fetchBooleanOption("output_flatten_data", options, properties, false);
@@ -504,19 +522,6 @@ public class MaxwellConfig extends AbstractConfig {
 
 		if (outputConfig.encryptionEnabled()) {
 			outputConfig.secretKey = fetchOption("secret_key", options, properties, null);
-			if (outputConfig.secretKey == null) {
-				usage("--secret_key required");
-			}
-		}
-
-		if ( this.excludeColumns != null ) {
-			for ( String s : this.excludeColumns.split(",") ) {
-				try {
-					outputConfig.excludeColumns.add(compileStringToPattern(s));
-				} catch ( MaxwellInvalidFilterException e ) {
-					usage("invalid exclude_columns: '" + this.excludeColumns + "': " + e.getMessage());
-				}
-			}
 		}
 	}
 
@@ -529,7 +534,38 @@ public class MaxwellConfig extends AbstractConfig {
 		return p;
 	}
 
+	private void validatePartitionBy() {
+		if ( this.producerPartitionKey == null && this.kafkaPartitionKey != null ) {
+			LOGGER.warn("kafka_partition_by is deprecated, please use producer_partition_by");
+			this.producerPartitionKey = this.kafkaPartitionKey;
+		}
+
+		if ( this.producerPartitionColumns == null && this.kafkaPartitionColumns != null) {
+			LOGGER.warn("kafka_partition_columns is deprecated, please use producer_partition_columns");
+			this.producerPartitionColumns = this.kafkaPartitionColumns;
+		}
+
+		if ( this.producerPartitionFallback == null && this.kafkaPartitionFallback != null ) {
+			LOGGER.warn("kafka_partition_by_fallback is deprecated, please use producer_partition_by_fallback");
+			this.producerPartitionFallback = this.kafkaPartitionFallback;
+		}
+
+		String[] validPartitionBy = {"database", "table", "primary_key", "column"};
+		if ( this.producerPartitionKey == null ) {
+			this.producerPartitionKey = "database";
+		} else if ( !ArrayUtils.contains(validPartitionBy, this.producerPartitionKey) ) {
+			usageForOptions("please specify --producer_partition_by=database|table|primary_key|column", "producer_partition_by");
+		} else if ( this.producerPartitionKey.equals("column") && StringUtils.isEmpty(this.producerPartitionColumns) ) {
+			usageForOptions("please specify --producer_partition_columns=column1 when using producer_partition_by=column", "producer_partition_columns");
+		} else if ( this.producerPartitionKey.equals("column") && StringUtils.isEmpty(this.producerPartitionFallback) ) {
+			usageForOptions("please specify --producer_partition_by_fallback=[database, table, primary_key] when using producer_partition_by=column", "producer_partition_by_fallback");
+		}
+
+	}
+
 	public void validate() {
+		validatePartitionBy();
+
 		if ( this.producerType.equals("kafka") ) {
 			if ( !this.kafkaProperties.containsKey("bootstrap.servers") ) {
 				usageForOptions("You must specify kafka.bootstrap.servers for the kafka producer!", "kafka");
@@ -540,19 +576,6 @@ public class MaxwellConfig extends AbstractConfig {
 			} else if ( !this.kafkaPartitionHash.equals("default")
 					&& !this.kafkaPartitionHash.equals("murmur3") ) {
 				usageForOptions("please specify --kafka_partition_hash=default|murmur3", "kafka_partition_hash");
-			}
-
-			if ( this.kafkaPartitionKey == null ) {
-				this.kafkaPartitionKey = "database";
-			} else if ( !this.kafkaPartitionKey.equals("database")
-					&& !this.kafkaPartitionKey.equals("table")
-					&& !this.kafkaPartitionKey.equals("primary_key")
-					&& !this.kafkaPartitionKey.equals("column") ) {
-				usageForOptions("please specify --kafka_partition_by=database|table|primary_key|column", "kafka_partition_by");
-			} else if ( this.kafkaPartitionKey.equals("column") && StringUtils.isEmpty(this.kafkaPartitionColumns) ) {
-				usageForOptions("please specify --kafka_partition_columns=column1 when using kafka_partition_by=column", "kafka_partition_columns");
-			} else if ( this.kafkaPartitionKey.equals("column") && StringUtils.isEmpty(this.kafkaPartitionFallback) ) {
-				usageForOptions("please specify --kafka_partition_by_fallback=[database, table, primary_key] when using kafka_partition_by=column", "kafka_partition_by_fallback");
 			}
 
 			if ( !this.kafkaKeyFormat.equals("hash") && !this.kafkaKeyFormat.equals("array") )
@@ -573,14 +596,13 @@ public class MaxwellConfig extends AbstractConfig {
 			usageForOptions("please specify --bootstrapper=async|sync|none", "--bootstrapper");
 		}
 
+		if (this.maxwellMysql.sslMode == null) {
+			this.maxwellMysql.sslMode = SSLMode.DISABLED;
+		}
+
 		if ( this.maxwellMysql.host == null ) {
 			LOGGER.warn("maxwell mysql host not specified, defaulting to localhost");
 			this.maxwellMysql.host = "localhost";
-		}
-
-		if ( this.replicationMysql.host != null && !this.bootstrapperType.equals("none") ) {
-			LOGGER.warn("disabling bootstrapping; not available when using a separate replication host.");
-			this.bootstrapperType = "none";
 		}
 
 		if ( this.replicationMysql.host == null
@@ -597,10 +619,15 @@ public class MaxwellConfig extends AbstractConfig {
 				this.maxwellMysql.port,
 				null,
 				this.maxwellMysql.user,
-				this.maxwellMysql.password
+				this.maxwellMysql.password,
+				this.maxwellMysql.sslMode
 			);
 
 			this.replicationMysql.jdbcOptions = this.maxwellMysql.jdbcOptions;
+		}
+
+		if (this.replicationMysql.sslMode == null) {
+			this.replicationMysql.sslMode = this.maxwellMysql.sslMode;
 		}
 
 		if (gtidMode && masterRecovery) {
@@ -621,8 +648,13 @@ public class MaxwellConfig extends AbstractConfig {
 			}
 		}
 
-		try {
-			this.filter = new MaxwellFilter(
+		if (this.schemaMysql.sslMode == null) {
+			this.schemaMysql.sslMode = this.maxwellMysql.sslMode;
+		}
+
+		if ( this.filter == null ) {
+			try {
+				this.filter = new MaxwellFilter(
 					includeDatabases,
 					excludeDatabases,
 					includeTables,
@@ -630,14 +662,34 @@ public class MaxwellConfig extends AbstractConfig {
 					blacklistDatabases,
 					blacklistTables,
 					includeColumnValues
-			);
-		} catch (MaxwellInvalidFilterException e) {
-			usage("Invalid filter options: " + e.getLocalizedMessage());
+				);
+			} catch (MaxwellInvalidFilterException e) {
+				usage("Invalid filter options: " + e.getLocalizedMessage());
+			}
 		}
 
 		if ( this.metricsDatadogType.contains("http") && StringUtils.isEmpty(this.metricsDatadogAPIKey) ) {
 			usageForOptions("please specify metrics_datadog_apikey when metrics_datadog_type = http");
 		}
+
+		if ( this.excludeColumns != null ) {
+			for ( String s : this.excludeColumns.split(",") ) {
+				try {
+					outputConfig.excludeColumns.add(compileStringToPattern(s));
+				} catch ( MaxwellInvalidFilterException e ) {
+					usage("invalid exclude_columns: '" + this.excludeColumns + "': " + e.getMessage());
+				}
+			}
+		}
+
+		if (outputConfig.encryptionEnabled() && outputConfig.secretKey == null)
+			usage("--secret_key required");
+
+		if ( !maxwellMysql.sameServerAs(replicationMysql) && !this.bootstrapperType.equals("none") ) {
+			LOGGER.warn("disabling bootstrapping; not available when using a separate replication host.");
+			this.bootstrapperType = "none";
+		}
+
 	}
 
 	public Properties getKafkaProperties() {

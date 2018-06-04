@@ -15,6 +15,7 @@ import com.zendesk.maxwell.util.Logging;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.net.URISyntaxException;
 import java.sql.Connection;
 import java.sql.SQLException;
 
@@ -25,11 +26,11 @@ public class Maxwell implements Runnable {
 
 	static final Logger LOGGER = LoggerFactory.getLogger(Maxwell.class);
 
-	public Maxwell(MaxwellConfig config) throws SQLException {
+	public Maxwell(MaxwellConfig config) throws SQLException, URISyntaxException {
 		this(new MaxwellContext(config));
 	}
 
-	protected Maxwell(MaxwellContext context) throws SQLException {
+	protected Maxwell(MaxwellContext context) throws SQLException, URISyntaxException {
 		this.config = context.getConfig();
 		this.context = context;
 		this.context.probeConnections();
@@ -100,7 +101,18 @@ public class Maxwell implements Runnable {
 			if ( config.masterRecovery )
 				initial = attemptMasterRecovery();
 
-			/* third method: capture the current master position. */
+			/* third method: is there a previous client_id?
+			   if so we have to start at that position or else
+			   we could miss schema changes, see https://github.com/zendesk/maxwell/issues/782 */
+
+			if ( initial == null ) {
+				initial = this.context.getOtherClientPosition();
+				if ( initial != null ) {
+					LOGGER.info("Found previous client position: " + initial);
+				}
+			}
+
+			/* fourth method: capture the current master position. */
 			if ( initial == null ) {
 				try ( Connection c = context.getReplicationConnection() ) {
 					initial = Position.capture(c, config.gtidMode);
@@ -212,7 +224,11 @@ public class Maxwell implements Runnable {
 		} catch ( SQLException e ) {
 			// catch SQLException explicitly because we likely don't care about the stacktrace
 			LOGGER.error("SQLException: " + e.getLocalizedMessage());
-			LOGGER.error(e.getLocalizedMessage());
+			System.exit(1);
+		} catch ( URISyntaxException e ) {
+			// catch URISyntaxException explicitly as well to provide more information to the user
+			LOGGER.error("Syntax issue with URI, check for misconfigured host, port, database, or JDBC options (see RFC 2396)");
+			LOGGER.error("URISyntaxException: " + e.getLocalizedMessage());
 			System.exit(1);
 		} catch ( Exception e ) {
 			e.printStackTrace();

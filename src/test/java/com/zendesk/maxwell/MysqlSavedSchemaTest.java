@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.ArrayList;
 import java.util.Arrays;
 
+import com.google.common.collect.Lists;
 import com.zendesk.maxwell.replication.BinlogPosition;
 import com.zendesk.maxwell.replication.Position;
 import org.apache.commons.lang3.StringUtils;
@@ -56,7 +57,7 @@ public class MysqlSavedSchemaTest extends MaxwellTestWithIsolatedServer {
 		this.position = MaxwellTestSupport.capture(server.getConnection());
 		this.context = buildContext(position);
 		this.schema = new SchemaCapturer(server.getConnection(), context.getCaseSensitivity()).capture();
-		this.savedSchema = new MysqlSavedSchema(this.context, this.schema, position);
+		this.savedSchema = SavedSchemaSupport.getSavedSchema(this.context, this.schema, this.position);
 	}
 
 	@Test
@@ -183,6 +184,29 @@ public class MysqlSavedSchemaTest extends MaxwellTestWithIsolatedServer {
 		assertEquals((Long) 3L, (Long) cd.getColumnLength());
 	}
 
+	@Test
+	public void testTableWithSameNameInTwoDBs() throws Exception {
+		String sql[] = {
+			"create database dd1",
+			"create database dd2",
+			"create TABLE dd1.t1( i int )",
+			"create TABLE dd2.t1( i int )",
+
+		};
+
+		server.executeList(sql);
+		this.schema = new SchemaCapturer(server.getConnection(), context.getCaseSensitivity()).capture();
+		this.savedSchema = SavedSchemaSupport.getSavedSchema(this.context, this.schema, this.position);
+		Connection c = context.getMaxwellConnection();
+		this.savedSchema.save(c);
+
+		MysqlSavedSchema restoredSchema = MysqlSavedSchema.restore(context, context.getInitialPosition());
+
+		Table t = restoredSchema.getSchema().findDatabase("dd2").findTable("t1");
+		assertThat(t, not(nullValue()));
+	}
+
+
 	private Schema buildSchema() {
 		String charset = Charset.defaultCharset().toString();
 		List<Database> databases = new ArrayList<>();
@@ -275,6 +299,40 @@ public class MysqlSavedSchemaTest extends MaxwellTestWithIsolatedServer {
 			serverId, caseSensitivity, targetBinlogPosition);
 		assertThat(foundSchema.getBinlogPosition(), equalTo(expectedSchema.getBinlogPosition()));
 		assertThat(foundSchema.getSchemaID(), equalTo(expectedSchema.getSchemaID()));
+	}
+
+	@Test
+	public void testFindBaseSchemaIdIfTheLatestSchemaPositionIsTheCurrentPosition() throws Exception {
+		if (context.getConfig().gtidMode) {
+			return;
+		}
+		Connection c = context.getMaxwellConnection();
+		long serverId = 100;
+		long targetPosition = 500;
+		long lastHeartbeat = 9000L;
+		String targetFile = "binlog01";
+		Position targetBinlogPosition = makePosition(targetPosition, targetFile, lastHeartbeat + 10L);
+
+		//base binlog position
+		MysqlSavedSchema baseSchema = new MysqlSavedSchema(
+				serverId, caseSensitivity,
+				buildSchema(),
+				makePosition(targetPosition - 200L, targetFile, lastHeartbeat)
+		);
+		baseSchema.save(c);
+
+		MysqlSavedSchema newSchema = new MysqlSavedSchema(serverId, caseSensitivity,
+				buildSchema(),
+				makePosition(targetPosition, targetFile, lastHeartbeat),
+				baseSchema.getSchemaID(),
+				Lists.newArrayList()
+		);
+		newSchema.save(c);
+
+		MysqlSavedSchema foundSchema = MysqlSavedSchema.restore(context.getMaxwellConnectionPool(),
+				serverId, caseSensitivity, targetBinlogPosition);
+
+		assertThat(foundSchema.getSchemaID(), equalTo(baseSchema.getSchemaID()));
 	}
 
 	@Test

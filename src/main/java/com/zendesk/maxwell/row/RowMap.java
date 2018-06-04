@@ -1,6 +1,7 @@
 package com.zendesk.maxwell.row;
 
 import com.fasterxml.jackson.core.*;
+import com.zendesk.maxwell.errors.ProtectedAttributeNameException;
 import com.zendesk.maxwell.producer.EncryptionMode;
 import com.zendesk.maxwell.replication.BinlogPosition;
 import com.zendesk.maxwell.producer.MaxwellOutputConfig;
@@ -15,17 +16,30 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.zendesk.maxwell.errors.ProtectedAttributeNameException;
+import com.zendesk.maxwell.producer.EncryptionMode;
+import com.zendesk.maxwell.producer.MaxwellOutputConfig;
+import com.zendesk.maxwell.replication.BinlogPosition;
+import com.zendesk.maxwell.replication.Position;
+
 
 public class RowMap implements Serializable {
-
 	public enum KeyFormat { HASH, ARRAY }
 
 	static final Logger LOGGER = LoggerFactory.getLogger(RowMap.class);
 
+	private final String rowQuery;
 	private final String rowType;
 	private final String database;
 	private final String table;
@@ -34,12 +48,16 @@ public class RowMap implements Serializable {
 	private Position nextPosition;
 
 	private Long xid;
+	private Long xoffset;
 	private boolean txCommit;
 	private Long serverId;
 	private Long threadId;
 
 	private final LinkedHashMap<String, Object> data;
 	private final LinkedHashMap<String, Object> oldData;
+
+	private final LinkedHashMap<String, Object> extraAttributes;
+
 	private final List<String> pkColumns;
 
 	private static final JsonFactory jsonFactory = new JsonFactory();
@@ -97,7 +115,8 @@ public class RowMap implements Serializable {
 			};
 
 	public RowMap(String type, String database, String table, Long timestampMillis, List<String> pkColumns,
-			Position nextPosition) {
+			Position nextPosition, String rowQuery) {
+		this.rowQuery = rowQuery;
 		this.rowType = type;
 		this.database = database;
 		this.table = table;
@@ -105,9 +124,15 @@ public class RowMap implements Serializable {
 		this.timestampSeconds = timestampMillis / 1000;
 		this.data = new LinkedHashMap<>();
 		this.oldData = new LinkedHashMap<>();
+		this.extraAttributes = new LinkedHashMap<>();
 		this.nextPosition = nextPosition;
 		this.pkColumns = pkColumns;
 		this.approximateSize = 100L; // more or less 100 bytes of overhead
+	}
+
+	public RowMap(String type, String database, String table, Long timestampMillis, List<String> pkColumns,
+				  Position nextPosition) {
+		this(type, database, table, timestampMillis, pkColumns, nextPosition, null);
 	}
 
 	//Do we want to encrypt this part?
@@ -123,18 +148,18 @@ public class RowMap implements Serializable {
 
 		g.writeStartObject(); // start of row {
 
-		g.writeStringField("database", database);
-		g.writeStringField("table", table);
+		g.writeStringField(FieldNames.DATABASE, database);
+		g.writeStringField(FieldNames.TABLE, table);
 
 		if (pkColumns.isEmpty()) {
-			g.writeStringField("_uuid", UUID.randomUUID().toString());
+			g.writeStringField(FieldNames.UUID, UUID.randomUUID().toString());
 		} else {
 			for (String pk : pkColumns) {
 				Object pkValue = null;
 				if ( data.containsKey(pk) )
 					pkValue = data.get(pk);
 
-				g.writeObjectField("pk." + pk.toLowerCase(), pkValue);
+				writeValueToJSON(g, true, "pk." + pk.toLowerCase(), pkValue);
 			}
 		}
 
@@ -157,7 +182,7 @@ public class RowMap implements Serializable {
 				pkValue = data.get(pk);
 
 			g.writeStartObject();
-			g.writeObjectField(pk.toLowerCase(), pkValue);
+			writeValueToJSON(g, true, pk.toLowerCase(), pkValue);
 			g.writeEndObject();
 		}
 		g.writeEndArray();
@@ -207,27 +232,31 @@ public class RowMap implements Serializable {
 		for (String key : data.keySet()) {
 			Object value = data.get(key);
 
-			if (value == null && !includeNullField)
-				continue;
-
-			if (value instanceof List) { // sets come back from .asJSON as lists, and jackson can't deal with lists natively.
-				List stringList = (List) value;
-
-				g.writeArrayFieldStart(key);
-				for (Object s : stringList) {
-					g.writeObject(s);
-				}
-				g.writeEndArray();
-			} else if (value instanceof RawJSONString) {
-				// JSON column type, using binlog-connector's serializers.
-				g.writeFieldName(key);
-				g.writeRawValue(((RawJSONString) value).json);
-			} else {
-				g.writeObjectField(key, value);
-			}
+			writeValueToJSON(g, includeNullField, key, value);
 		}
 
 		g.writeEndObject(); // end of 'jsonMapName: { }'
+	}
+
+	private void writeValueToJSON(JsonGenerator g, boolean includeNullField, String key, Object value) throws IOException {
+		if (value == null && !includeNullField)
+			return;
+
+		if (value instanceof List) { // sets come back from .asJSON as lists, and jackson can't deal with lists natively.
+			List stringList = (List) value;
+
+			g.writeArrayFieldStart(key);
+			for (Object s : stringList) {
+				g.writeObject(s);
+			}
+			g.writeEndArray();
+		} else if (value instanceof RawJSONString) {
+			// JSON column type, using binlog-connector's serializers.
+			g.writeFieldName(key);
+			g.writeRawValue(((RawJSONString) value).json);
+		} else {
+			g.writeObjectField(key, value);
+		}
 	}
 	
 	private void writeMapToStringAsJSON(
@@ -273,43 +302,55 @@ public class RowMap implements Serializable {
 
 	public String toJSON(MaxwellOutputConfig outputConfig) throws Exception {
 		JsonGenerator g = resetJsonGenerator();
-		
 
 		g.writeStartObject(); // start of row {
 
-		g.writeStringField(outputConfig.prefixString + "database", this.database);
-		g.writeStringField(outputConfig.prefixString + "table", this.table);
-		g.writeStringField(outputConfig.prefixString + "type", this.rowType);
-		g.writeNumberField(outputConfig.prefixString + "ts", this.timestampSeconds);
+		g.writeStringField(outputConfig.prefixString + FieldNames.DATABASE, this.database);
+		g.writeStringField(outputConfig.prefixString + FieldNames.TABLE, this.table);
+
+		if ( outputConfig.includesRowQuery && this.rowQuery != null) {
+			g.writeStringField(outputConfig.prefixString + FieldNames.QUERY, this.rowQuery);
+		}
+
+		g.writeStringField(outputConfig.prefixString + FieldNames.TYPE, this.rowType);
+		g.writeNumberField(outputConfig.prefixString + FieldNames.TIMESTAMP, this.timestampSeconds);
+
 		if (outputConfig.includesTimeStampMs) {
-			g.writeNumberField(outputConfig.prefixString + "tsm", this.timestampMillis);
+			g.writeNumberField(outputConfig.prefixString + FieldNames.TSM, this.timestampMillis);
 		}
 		if (outputConfig.includesActualTimeStampMs) {
-			g.writeNumberField(outputConfig.prefixString + "atsm", System.currentTimeMillis());
+			g.writeNumberField(outputConfig.prefixString + FieldNames.ATSM, System.currentTimeMillis());
 		}
 
 		if ( outputConfig.includesCommitInfo ) {
 			if ( this.xid != null )
-				g.writeNumberField(outputConfig.prefixString + "xid", this.xid);
+				g.writeNumberField(outputConfig.prefixString + FieldNames.TRANSACTION_ID, this.xid);
+
+			if ( outputConfig.includesXOffset && this.xoffset != null && !this.txCommit )
+				g.writeNumberField(outputConfig.prefixString + FieldNames.TRANSACTION_OFFSET, this.xoffset);
 
 			if ( this.txCommit )
-				g.writeBooleanField(outputConfig.prefixString + "commit", true);
+				g.writeBooleanField(outputConfig.prefixString + FieldNames.COMMIT, true);
 		}
 
 		BinlogPosition binlogPosition = this.nextPosition.getBinlogPosition();
 		if ( outputConfig.includesBinlogPosition )
-			g.writeStringField(outputConfig.prefixString + "position", binlogPosition.getFile() + ":" + binlogPosition.getOffset());
+			g.writeStringField(outputConfig.prefixString + FieldNames.POSITION, binlogPosition.getFile() + ":" + binlogPosition.getOffset());
 
 
 		if ( outputConfig.includesGtidPosition)
-			g.writeStringField(outputConfig.prefixString + "gtid", binlogPosition.getGtid());
+			g.writeStringField(outputConfig.prefixString + FieldNames.GTID, binlogPosition.getGtid());
 
 		if ( outputConfig.includesServerId && this.serverId != null ) {
-			g.writeNumberField(outputConfig.prefixString + "server_id", this.serverId);
+			g.writeNumberField(outputConfig.prefixString + FieldNames.SERVER_ID, this.serverId);
 		}
 
 		if ( outputConfig.includesThreadId && this.threadId != null ) {
-			g.writeNumberField(outputConfig.prefixString + "thread_id", this.threadId);
+			g.writeNumberField(outputConfig.prefixString + FieldNames.THREAD_ID, this.threadId);
+		}
+
+		for ( Map.Entry<String, Object> entry : this.extraAttributes.entrySet() ) {
+			g.writeObjectField(entry.getKey(), entry.getValue());
 		}
 
 		if ( outputConfig.excludeColumns.size() > 0 ) {
@@ -338,19 +379,17 @@ public class RowMap implements Serializable {
 			? encryptingJsonGeneratorThreadLocal.get()
 			: plaintextDataGeneratorThreadLocal.get();
 
-			
-			
 		JsonGenerator dataGenerator = dataWriter.begin();
 		if (outputConfig.flattenData) {
-			writeMapToStringAsJSON(outputConfig.prefixString + "data", this.data, dataGenerator, outputConfig.includesNulls);
+			writeMapToStringAsJSON(outputConfig.prefixString + FieldNames.DATA, this.data, dataGenerator, outputConfig.includesNulls);
 			if( !this.oldData.isEmpty() ){
-				writeMapToStringAsJSON(outputConfig.prefixString + "old", this.oldData, dataGenerator, outputConfig.includesNulls);
+				writeMapToStringAsJSON(outputConfig.prefixString + FieldNames.OLD, this.oldData, dataGenerator, outputConfig.includesNulls);
 			}
 		} else {
-			writeMapToJSON(outputConfig.prefixString + "data", this.data, dataGenerator, outputConfig.includesNulls);
+			writeMapToJSON(outputConfig.prefixString + FieldNames.DATA, this.data, dataGenerator, outputConfig.includesNulls);
 			if( !this.oldData.isEmpty() ){
-				writeMapToJSON(outputConfig.prefixString + "old", this.oldData, dataGenerator, outputConfig.includesNulls);
-			}			
+				writeMapToJSON(outputConfig.prefixString + FieldNames.OLD, this.oldData, dataGenerator, outputConfig.includesNulls);
+			}
 		}
 		dataWriter.end(encryptionContext);
 
@@ -376,6 +415,9 @@ public class RowMap implements Serializable {
 		return this.data.get(key);
 	}
 
+	public Object getExtraAttribute(String key) {
+		return this.extraAttributes.get(key);
+	}
 
 	public long getApproximateSize() {
 		return approximateSize;
@@ -401,6 +443,17 @@ public class RowMap implements Serializable {
 		this.approximateSize += approximateKVSize(key, value);
 	}
 
+	public void putExtraAttribute(String key, Object value) {
+		if (FieldNames.isProtected(key)) {
+			throw new ProtectedAttributeNameException("Extra attribute key name '" + key + "' is " +
+					"a protected name. Must not be any of: " +
+					String.join(", ", FieldNames.getFieldnames()));
+		}
+		this.extraAttributes.put(key, value);
+
+		this.approximateSize += approximateKVSize(key, value);
+	}
+
 	public Object getOldData(String key) {
 		return this.oldData.get(key);
 	}
@@ -421,6 +474,14 @@ public class RowMap implements Serializable {
 
 	public void setXid(Long xid) {
 		this.xid = xid;
+	}
+
+	public Long getXoffset() {
+		return xoffset;
+	}
+
+	public void setXoffset(Long xoffset) {
+		this.xoffset = xoffset;
 	}
 
 	public void setTXCommit() {
@@ -467,6 +528,10 @@ public class RowMap implements Serializable {
 		return this.data.containsKey(name);
 	}
 
+	public String getRowQuery() {
+		return rowQuery;
+	}
+
 	public String getRowType() {
 		return this.rowType;
 	}
@@ -481,6 +546,11 @@ public class RowMap implements Serializable {
 	public LinkedHashMap<String, Object> getData()
 	{
 		return new LinkedHashMap<>(data);
+	}
+
+	public LinkedHashMap<String, Object> getExtraAttributes()
+	{
+		return new LinkedHashMap<>(extraAttributes);
 	}
 
 	public LinkedHashMap<String, Object> getOldData()

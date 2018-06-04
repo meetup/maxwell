@@ -2,10 +2,9 @@ package com.zendesk.maxwell.replication;
 
 import com.codahale.metrics.Histogram;
 import com.github.shyiko.mysql.binlog.BinaryLogClient;
-import com.github.shyiko.mysql.binlog.event.EventType;
-import com.github.shyiko.mysql.binlog.event.QueryEventData;
-import com.github.shyiko.mysql.binlog.event.TableMapEventData;
+import com.github.shyiko.mysql.binlog.event.*;
 import com.github.shyiko.mysql.binlog.event.deserialization.EventDeserializer;
+import com.github.shyiko.mysql.binlog.network.SSLMode;
 import com.zendesk.maxwell.MaxwellContext;
 import com.zendesk.maxwell.MaxwellMysqlConfig;
 import com.zendesk.maxwell.bootstrap.AbstractBootstrapper;
@@ -61,6 +60,8 @@ public class BinlogConnectorReplicator extends AbstractReplicator implements Rep
 		transactionRowCount = metrics.getRegistry().histogram(metrics.metricName("transaction", "row_count"));
 
 		this.client = new BinaryLogClient(mysqlConfig.host, mysqlConfig.port, mysqlConfig.user, mysqlConfig.password);
+		this.client.setSSLMode(mysqlConfig.sslMode);
+
 		BinlogPosition startBinlog = start.getBinlogPosition();
 		if (startBinlog.getGtidSetStr() != null) {
 			String gtidStr = startBinlog.getGtidSetStr();
@@ -73,8 +74,11 @@ public class BinlogConnectorReplicator extends AbstractReplicator implements Rep
 		}
 
 		EventDeserializer eventDeserializer = new EventDeserializer();
-		eventDeserializer.setCompatibilityMode(EventDeserializer.CompatibilityMode.DATE_AND_TIME_AS_LONG_MICRO,
-			EventDeserializer.CompatibilityMode.CHAR_AND_BINARY_AS_BYTE_ARRAY);
+		eventDeserializer.setCompatibilityMode(
+			EventDeserializer.CompatibilityMode.DATE_AND_TIME_AS_LONG_MICRO,
+			EventDeserializer.CompatibilityMode.CHAR_AND_BINARY_AS_BYTE_ARRAY,
+			EventDeserializer.CompatibilityMode.INVALID_DATE_AND_TIME_AS_MIN_VALUE
+		);
 		this.client.setEventDeserializer(eventDeserializer);
 		this.binlogEventListener = new BinlogConnectorEventListener(client, queue, metrics);
 		this.binlogLifecycleListener = new BinlogConnectorLifecycleListener();
@@ -147,6 +151,8 @@ public class BinlogConnectorReplicator extends AbstractReplicator implements Rep
 		BinlogConnectorEvent event;
 		RowMapBuffer buffer = new RowMapBuffer(MAX_TX_ELEMENTS);
 
+		String currentQuery = null;
+
 		while ( true ) {
 			event = pollEvent();
 
@@ -179,16 +185,20 @@ public class BinlogConnectorReplicator extends AbstractReplicator implements Rep
 					Table table = tableCache.getTable(event.getTableID());
 
 					if ( table != null && shouldOutputEvent(table.getDatabase(), table.getName(), filter) ) {
-						for ( RowMap r : event.jsonMaps(table, lastHeartbeatPosition) )
+						for ( RowMap r : event.jsonMaps(table, lastHeartbeatPosition, currentQuery) )
 							if (shouldOutputRowMap(table.getDatabase(), table.getName(), r, filter)) {
 								buffer.add(r);
 							}
 					}
-
+					currentQuery = null;
 					break;
 				case TABLE_MAP:
 					TableMapEventData data = event.tableMapData();
 					tableCache.processEvent(getSchema(), this.filter, data.getTableId(), data.getDatabase(), data.getTable());
+					break;
+				case ROWS_QUERY:
+					RowsQueryEventData rqed = event.getEvent().getData();
+					currentQuery = rqed.getQuery();
 					break;
 				case QUERY:
 					QueryEventData qe = event.queryData();
