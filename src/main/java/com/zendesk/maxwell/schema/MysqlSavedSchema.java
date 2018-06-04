@@ -486,6 +486,8 @@ public class MysqlSavedSchema {
 			if (currentDatabase == null || !currentDatabase.getName().equals(dbName)) {
 				currentDatabase = new Database(dbName, dbCharset);
 				this.schema.addDatabase(currentDatabase);
+				// make sure two tables named the same in different dbs are picked up.
+				currentTable = null;
 				LOGGER.debug("Restoring database " + dbName + "...");
 			}
 
@@ -573,7 +575,7 @@ public class MysqlSavedSchema {
 			PreparedStatement s = connection.prepareStatement(
 				"SELECT id from `schemas` "
 				+ "WHERE deleted = 0 "
-				+ "AND last_heartbeat_read <= ? AND ((binlog_file < ?) OR (binlog_file = ? and binlog_position <= ?)) AND server_id = ? "
+				+ "AND last_heartbeat_read <= ? AND ((binlog_file < ?) OR (binlog_file = ? and binlog_position < ?)) AND server_id = ? "
 				+ "ORDER BY last_heartbeat_read DESC, binlog_file DESC, binlog_position DESC limit 1");
 
 			s.setLong(1, targetPosition.getLastHeartbeatRead());

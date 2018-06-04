@@ -18,6 +18,9 @@ password=maxwell
 # set the log level.  note that you can configure things further in log4j2.xml
 #log_level=DEBUG # [DEBUG, INFO, WARN, ERROR]
 
+# if set, maxwell will look up the scoped environment variables, strip off the prefix and inject the configs
+#env_config_prefix=MAXWELL_
+
 ######### mysql stuff ###############
 
 # mysql host to connect to
@@ -39,6 +42,18 @@ password=maxwell
 # name of the mysql database where maxwell keeps its own state
 #schema_database=maxwell
 
+# SSL/TLS options
+# To use VERIFY_CA or VERIFY_IDENTITY, you must set the trust store with Java opts:
+#   -Djavax.net.ssl.trustStore=<truststore> -Djavax.net.ssl.trustStorePassword=<password>
+# or import the MySQL cert into the global Java cacerts.
+# MODE must be one of DISABLED, PREFERRED, REQUIRED, VERIFY_CA, or VERIFY_IDENTITY
+#
+# turns on ssl for the maxwell-store connection, other connections inherit this setting unless specified
+#ssl=DISABLED
+# for binlog-connector
+#replication_ssl=DISABLED
+# for the schema-capture connection, if used
+#schema_ssl=DISABLED
 
 # maxwell can optionally replicate from a different server than where it stores
 # schema and binlog position info.  Specify that different server here:
@@ -75,6 +90,9 @@ password=maxwell
 
 # records include thread_id (default false)
 #output_thread_id=true
+
+# records include row query, binlog option "binlog_rows_query_log_events" must be enabled" (default false)
+#output_row_query=true
 
 # records include commit and xid (default true)
 #output_commit_info=true
@@ -170,6 +188,7 @@ sqs_queue_uri=aws_sqs_queue_uri
 
 ######### rabbitmq ###################
 #rabbitmq_host=rabbitmq_hostname
+#rabbitmq_port=5672
 #rabbitmq_user=guest
 #rabbitmq_pass=guest
 #rabbitmq_virtual_host=/
@@ -179,13 +198,17 @@ sqs_queue_uri=aws_sqs_queue_uri
 #rabbitmq_exchange_autodelete=false
 #rabbitmq_routing_key_template=%db%.%table%
 #rabbitmq_message_persistent=false
+#rabbitmq_declare_exchange=true
 
 ######### redis ######################
+# Valid values for redis_type = pubsub|lpush. Defaults to pubsub
 #redis_host=redis_host
 #redis_port=6379
 #redis_auth=redis_auth
 #redis_database=0
 #redis_pub_channel=maxwell
+#redis_list_key=maxwell
+#redis_type=pubsub
 
 ######### custom producer ######################
 # the fully qualified class name for custom ProducerFactory
@@ -249,6 +272,9 @@ sqs_queue_uri=aws_sqs_queue_uri
 
 # The prefix maxwell will apply to all metrics
 #metrics_prefix=MaxwellMetrics # default MaxwellMetrics
+
+# Enable (dropwizard) JVM metrics, default false
+#metrics_jvm=true
 
 # When metrics_type includes slf4j this is the frequency metrics are emitted to the log, in seconds
 #metrics_slf4j_interval=60

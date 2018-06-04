@@ -1,5 +1,6 @@
 package com.zendesk.maxwell;
 
+import com.google.common.collect.Lists;
 import com.zendesk.maxwell.producer.EncryptionMode;
 import com.zendesk.maxwell.producer.MaxwellOutputConfig;
 import com.zendesk.maxwell.row.RowMap;
@@ -8,10 +9,15 @@ import org.apache.commons.lang3.ArrayUtils;
 import org.junit.Test;
 
 import java.sql.ResultSet;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 
+import static org.hamcrest.CoreMatchers.containsString;
+import static org.hamcrest.CoreMatchers.hasItem;
 import static org.hamcrest.CoreMatchers.is;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
@@ -95,6 +101,17 @@ public class MaxwellIntegrationTest extends MaxwellTestWithIsolatedServer {
 		String before[] = { "create table pksen (Id int, primary key(ID))" };
 		String input[] = {"insert into pksen set id =1"};
 		String expectedJSON = "{\"database\":\"shard_1\",\"table\":\"pksen\",\"pk.id\":1}";
+		list = getRowsForSQL(null, input, before);
+		assertThat(list.size(), is(1));
+		assertThat(list.get(0).pkToJson(RowMap.KeyFormat.HASH), is(expectedJSON));
+	}
+
+	@Test
+	public void testPrimaryKeyWithSetType() throws Exception {
+		List<RowMap> list;
+		String before[] = { "create table pksen (Id set('android','iphone','ipad'), primary key(ID))" };
+		String input[] = {"insert into pksen set id ='android'"};
+		String expectedJSON = "{\"database\":\"shard_1\",\"table\":\"pksen\",\"pk.id\":[\"android\"]}";
 		list = getRowsForSQL(null, input, before);
 		assertThat(list.size(), is(1));
 		assertThat(list.get(0).pkToJson(RowMap.KeyFormat.HASH), is(expectedJSON));
@@ -470,6 +487,11 @@ public class MaxwellIntegrationTest extends MaxwellTestWithIsolatedServer {
 	}
 
 	@Test
+	public void testInvalid() throws Exception {
+		requireMinimumVersion(server.VERSION_5_6);
+		runJSON("/json/test_invalid_time");
+	}
+	@Test
 	public void testUCS2() throws Exception {
 		runJSON("/json/test_ucs2");
 	}
@@ -515,11 +537,27 @@ public class MaxwellIntegrationTest extends MaxwellTestWithIsolatedServer {
 	public void testJdbcConnectionOptions() throws Exception {
 		String[] opts = {"--jdbc_options= netTimeoutForStreamingResults=123& profileSQL=true  ", "--host=no-soup-spoons"};
 		MaxwellConfig config = new MaxwellConfig(opts);
-		assertEquals(config.maxwellMysql.getConnectionURI(),
-				"jdbc:mysql://no-soup-spoons:3306/maxwell?zeroDateTimeBehavior=convertToNull&connectTimeout=5000&netTimeoutForStreamingResults=123&profileSQL=true");
-		assertEquals(config.replicationMysql.getConnectionURI(),
-				"jdbc:mysql://no-soup-spoons:3306?zeroDateTimeBehavior=convertToNull&connectTimeout=5000&netTimeoutForStreamingResults=123&profileSQL=true");
+		config.validate();
+		assertThat(config.maxwellMysql.getConnectionURI(), containsString("jdbc:mysql://no-soup-spoons:3306/maxwell?"));
+		assertThat(config.replicationMysql.getConnectionURI(), containsString("jdbc:mysql://no-soup-spoons:3306?"));
 
+		Set<String> maxwellMysqlParams = new HashSet<>();
+		maxwellMysqlParams.addAll(Lists.newArrayList(config.maxwellMysql.getConnectionURI()
+				.split("\\?")[1].split("&")));
+
+		assertThat(maxwellMysqlParams, hasItem("zeroDateTimeBehavior=convertToNull"));
+		assertThat(maxwellMysqlParams, hasItem("connectTimeout=5000"));
+		assertThat(maxwellMysqlParams, hasItem("netTimeoutForStreamingResults=123"));
+		assertThat(maxwellMysqlParams, hasItem("profileSQL=true"));
+
+		Set<String> replicationMysqlParams = new HashSet<>();
+		replicationMysqlParams.addAll(Lists.newArrayList(config.replicationMysql.getConnectionURI()
+				.split("\\?")[1].split("&")));
+
+		assertThat(replicationMysqlParams, hasItem("zeroDateTimeBehavior=convertToNull"));
+		assertThat(replicationMysqlParams, hasItem("connectTimeout=5000"));
+		assertThat(replicationMysqlParams, hasItem("netTimeoutForStreamingResults=123"));
+		assertThat(replicationMysqlParams, hasItem("profileSQL=true"));
 	}
 
 	@Test
@@ -561,5 +599,14 @@ public class MaxwellIntegrationTest extends MaxwellTestWithIsolatedServer {
 		assertNull(config.schemaMysql.host);
 		assertNull(config.schemaMysql.user);
 		assertNull(config.schemaMysql.password);
+	}
+
+	@Test
+	public void testRowQueryLogEventsIsOn() throws Exception {
+		requireMinimumVersion(server.VERSION_5_6);
+		MaxwellOutputConfig outputConfig = new MaxwellOutputConfig();
+		outputConfig.includesRowQuery = true;
+
+		runJSON("/json/test_row_query_log_is_on", outputConfig);
 	}
 }

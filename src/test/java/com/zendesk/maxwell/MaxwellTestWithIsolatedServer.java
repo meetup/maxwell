@@ -8,6 +8,7 @@ import com.zendesk.maxwell.producer.MaxwellOutputConfig;
 import com.zendesk.maxwell.replication.MysqlVersion;
 import com.zendesk.maxwell.replication.Position;
 import com.zendesk.maxwell.row.RowMap;
+import com.zendesk.maxwell.util.Logging;
 import org.junit.*;
 
 import static org.junit.Assume.assumeTrue;
@@ -21,6 +22,7 @@ public class MaxwellTestWithIsolatedServer extends TestWithNameLogging {
 
 	@BeforeClass
 	public static void setupTest() throws Exception {
+		Logging.setupLogBridging();
 		server = MaxwellTestSupport.setupServer();
 	}
 
@@ -67,11 +69,15 @@ public class MaxwellTestWithIsolatedServer extends TestWithNameLogging {
 	}
 
 	protected void runJSON(String filename) throws Exception {
-		MaxwellTestJSON.runJSONTestFile(server, filename, null);
+		MaxwellTestJSON.runJSONTestFile(server, filename, null, null);
 	}
 
 	protected void runJSON(String filename, MaxwellFilter filter) throws Exception {
-		MaxwellTestJSON.runJSONTestFile(server, filename, filter);
+		MaxwellTestJSON.runJSONTestFile(server, filename, filter, null);
+	}
+
+	protected void runJSON(String filename, MaxwellOutputConfig outputConfig) throws Exception {
+		MaxwellTestJSON.runJSONTestFile(server, filename, null, outputConfig);
 	}
 
 	protected MaxwellContext buildContext() throws Exception {
