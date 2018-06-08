@@ -341,7 +341,7 @@ public class MaxwellContext {
 				this.producer = new MaxwellKafkaProducer(this, this.config.getKafkaProperties(), this.config.kafkaTopic);
 				break;
 			case "kinesis":
-				this.producer = new MaxwellKinesisProducer(this, this.config.kinesisStream);
+				this.producer = new MaxwellKinesisProducer(this);
 				break;
 			case "sqs":
 				this.producer = new MaxwellSQSProducer(this, this.config.sqsQueueUri);

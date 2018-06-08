@@ -94,18 +94,28 @@ public class MaxwellKinesisProducer extends AbstractAsyncProducer {
 	private static final Logger logger = LoggerFactory.getLogger(MaxwellKinesisProducer.class);
 
 	private final MaxwellKinesisPartitioner partitioner;
+	private final MaxwellKinesisStreamMapper streamMapper;
 	private final KinesisProducer kinesisProducer;
 	private final String kinesisStream;
 
-	public MaxwellKinesisProducer(MaxwellContext context, String kinesisStream) {
+	public MaxwellKinesisProducer(MaxwellContext context) {
 		super(context);
 
 		String partitionKey = context.getConfig().producerPartitionKey;
 		String partitionColumns = context.getConfig().producerPartitionColumns;
 		String partitionFallback = context.getConfig().producerPartitionFallback;
+		String kinesisStream = context.getConfig().kinesisStream;
+		String kinesisMultiStreams = context.getConfig().kinesisMultiStreams;
 		boolean kinesisMd5Keys = context.getConfig().kinesisMd5Keys;
 		this.partitioner = new MaxwellKinesisPartitioner(partitionKey, partitionColumns, partitionFallback, kinesisMd5Keys);
-		this.kinesisStream = kinesisStream;
+		if ( kinesisMultiStreams == null ) {
+			this.kinesisStream = kinesisStream;
+			this.streamMapper = null;
+		} else {
+			this.kinesisStream = null;
+			this.streamMapper = new MaxwellKinesisStreamMapper(kinesisMultiStreams);
+		}
+
 
 		Path path = Paths.get("kinesis-producer-library.properties");
 		if(Files.exists(path) && Files.isRegularFile(path)) {
@@ -119,6 +129,7 @@ public class MaxwellKinesisProducer extends AbstractAsyncProducer {
 	@Override
 	public void sendAsync(RowMap r, AbstractAsyncProducer.CallbackCompleter cc) throws Exception {
 		String key = this.partitioner.getKinesisKey(r);
+		String kinesisStream = this.kinesisStream != null ? this.kinesisStream : this.streamMapper.getStream(r);
 		String value = r.toJSON(outputConfig);
 
 		ByteBuffer encodedValue = ByteBuffer.wrap(value.getBytes("UTF-8"));

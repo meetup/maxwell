@@ -58,6 +58,7 @@ public class MaxwellConfig extends AbstractConfig {
 	public String producerPartitionFallback;
 
 	public String kinesisStream;
+	public String kinesisMultiStreams;
 	public boolean kinesisMd5Keys;
 
 	public String sqsQueueUri;
@@ -196,6 +197,7 @@ public class MaxwellConfig extends AbstractConfig {
 		parser.accepts( "kafka_key_format", "how to format the kafka key; array|hash" ).withRequiredArg();
 
 		parser.accepts( "kinesis_stream", "kinesis stream name" ).withOptionalArg();
+		parser.accepts( "kinesis_multi_streams", "kinesis multi stream names to table mapping, e.g. stream1:table1,stream1:table2,stream3:table3" ).withRequiredArg();
 		parser.accepts( "sqs_queue_uri", "SQS Queue uri" ).withRequiredArg();
 
 		parser.accepts( "pubsub_project_id", "provide a google cloud platform project id associated with the pubsub topic" ).withRequiredArg();
@@ -415,6 +417,7 @@ public class MaxwellConfig extends AbstractConfig {
 		this.producerPartitionFallback = fetchOption("producer_partition_by_fallback", options, properties, null);
 
 		this.kinesisStream  = fetchOption("kinesis_stream", options, properties, null);
+		this.kinesisMultiStreams = fetchOption("kinesis_multi_streams", options, properties, null);
 		this.kinesisMd5Keys = fetchBooleanOption("kinesis_md5_keys", options, properties, false);
 
 		this.sqsQueueUri = fetchOption("sqs_queue_uri", options, properties, null);
@@ -584,7 +587,7 @@ public class MaxwellConfig extends AbstractConfig {
 		} else if ( this.producerType.equals("file")
 				&& this.outputFile == null) {
 			usageForOptions("please specify --output_file=FILE to use the file producer", "--producer", "--output_file");
-		} else if ( this.producerType.equals("kinesis") && this.kinesisStream == null) {
+		} else if ( this.producerType.equals("kinesis") && this.kinesisStream == null && this.kinesisMultiStreams == null ) {
 			usageForOptions("please specify a stream name for kinesis", "kinesis_stream");
 		} else if (this.producerType.equals("sqs") && this.sqsQueueUri == null) {
 			usageForOptions("please specify a queue uri for sqs", "sqs_queue_uri");

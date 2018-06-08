@@ -165,6 +165,11 @@ kafka.acks=1
 ######### kinesis ####################
 kinesis_stream=maxwell
 
+# enable maxwell to write to multiple streams based on database.table names
+# first stream in the csv list will be default if nothing matches
+# kinesis_stream will be ingored if kinesis_multi_streams is set
+#kinesis_multi_streams=stream1:database1.table1,stream1:database1.table2,stream2:database2.table1
+
 # AWS places a 256 unicode character limit on the max key length of a record
 # http://docs.aws.amazon.com/kinesis/latest/APIReference/API_PutRecord.html
 #
