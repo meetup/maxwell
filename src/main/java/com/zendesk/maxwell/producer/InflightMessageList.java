@@ -11,15 +11,16 @@ import com.zendesk.maxwell.replication.Position;
 
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 
 public class InflightMessageList {
 
-	class InflightMessage {
+	class InflightTXMessage {
 		public final Position position;
 		public boolean isComplete;
 		public final long sendTimeMS;
 
-		InflightMessage(Position p) {
+		InflightTXMessage(Position p) {
 			this.position = p;
 			this.isComplete = false;
 			this.sendTimeMS = System.currentTimeMillis();
@@ -33,12 +34,15 @@ public class InflightMessageList {
 	private static final long INIT_CAPACITY = 1000;
 	private static final double COMPLETE_PERCENTAGE_THRESHOLD = 0.9;
 
-	private final LinkedHashMap<Position, InflightMessage> linkedMap;
+	private final LinkedHashMap<Integer, InflightTXMessage> txMessages;
+	private final LinkedHashSet<Integer> nonTXMessages;
 	private final MaxwellContext context;
 	private final long capacity;
+	private final long nonTXCapacity;
 	private final long producerAckTimeoutMS;
 	private final double completePercentageThreshold;
-	private volatile boolean isFull;
+	private volatile boolean isFullTX;
+	private volatile boolean isFullNonTX;
 
 	public InflightMessageList(MaxwellContext context) {
 		this(context, INIT_CAPACITY, COMPLETE_PERCENTAGE_THRESHOLD);
@@ -48,38 +52,54 @@ public class InflightMessageList {
 		this.context = context;
 		this.producerAckTimeoutMS = context.getConfig().producerAckTimeout;
 		this.completePercentageThreshold = completePercentageThreshold;
-		this.linkedMap = new LinkedHashMap<>();
+		this.txMessages = new LinkedHashMap<>();
+		this.nonTXMessages = new LinkedHashSet<>();
 		this.capacity = capacity;
+        this.nonTXCapacity = capacity * 100;
 	}
 
-	public void addMessage(Position p) throws InterruptedException {
-		synchronized (this.linkedMap) {
-			while (isFull) {
-				this.linkedMap.wait();
+	public void addTXMessage(int rowId, Position p) throws InterruptedException {
+		synchronized (this.txMessages) {
+			while (isFullTX) {
+				this.txMessages.wait();
 			}
 
-			InflightMessage m = new InflightMessage(p);
-			this.linkedMap.put(p, m);
+			InflightTXMessage m = new InflightTXMessage(p);
+			this.txMessages.put(rowId, m);
 
-			if (linkedMap.size() >= capacity) {
-				isFull = true;
+			if (txMessages.size() >= capacity) {
+				isFullTX = true;
+			}
+		}
+	}
+
+	public void addNonTXMessage(int rowId) throws InterruptedException {
+		synchronized (this.nonTXMessages) {
+			while (isFullNonTX) {
+				this.nonTXMessages.wait();
+			}
+
+			this.nonTXMessages.add(rowId);
+
+			if (nonTXMessages.size() >= nonTXCapacity) {
+				isFullNonTX = true;
 			}
 		}
 	}
 
 	/* returns the position that stuff is complete up to, or null if there were no changes */
-	public InflightMessage completeMessage(Position p) {
-		synchronized (this.linkedMap) {
-			InflightMessage m = this.linkedMap.get(p);
+	public InflightTXMessage completeTXMessage(int rowId) {
+		synchronized (this.txMessages) {
+			InflightTXMessage m = this.txMessages.get(rowId);
 			assert(m != null);
 
 			m.isComplete = true;
 
-			InflightMessage completeUntil = null;
-			Iterator<InflightMessage> iterator = iterator();
+			InflightTXMessage completeUntil = null;
+			Iterator<InflightTXMessage> iterator = iterator();
 
 			while ( iterator.hasNext() ) {
-				InflightMessage msg = iterator.next();
+				InflightTXMessage msg = iterator.next();
 				if ( !msg.isComplete ) {
 					break;
 				}
@@ -88,17 +108,17 @@ public class InflightMessageList {
 				iterator.remove();
 			}
 
-			if (isFull && linkedMap.size() < capacity) {
-				isFull = false;
-				this.linkedMap.notify();
+			if (isFullTX && txMessages.size() < capacity) {
+				isFullTX = false;
+				this.txMessages.notify();
 			}
 
 			// If the head is stuck for the length of time (configurable) and majority of the messages have completed,
 			// we assume the head will unlikely get acknowledged, hence terminate Maxwell.
 			// This gatekeeper is the last resort since if anything goes wrong,
 			// producer should have raised exceptions earlier than this point when all below conditions are met.
-			if (producerAckTimeoutMS > 0 && isFull) {
-				Iterator<InflightMessage> it = iterator();
+			if (producerAckTimeoutMS > 0 && isFullTX) {
+				Iterator<InflightTXMessage> it = iterator();
 				if (it.hasNext() && it.next().timeSinceSendMS() > producerAckTimeoutMS && completePercentage() >= completePercentageThreshold) {
 					context.terminate(new IllegalStateException(
 							"Did not receive acknowledgement for the head of the inflight message list for " + producerAckTimeoutMS + " ms"));
@@ -109,16 +129,28 @@ public class InflightMessageList {
 		}
 	}
 
+	public void completeNonTXMessage(int rowId) {
+		synchronized (this.nonTXMessages) {
+			nonTXMessages.remove(rowId);
+			if (isFullNonTX && nonTXMessages.size() < nonTXCapacity) {
+				isFullNonTX = false;
+				this.nonTXMessages.notify();
+			}
+
+			return;
+		}
+	}
+
 	public int size() {
-		return linkedMap.size();
+		return txMessages.size() + nonTXMessages.size();
 	}
 
 	private double completePercentage() {
-		long completed = linkedMap.values().stream().filter(m -> m.isComplete).count();
-		return completed / ((double) linkedMap.size());
+		long completed = txMessages.values().stream().filter(m -> m.isComplete).count();
+		return completed / ((double) txMessages.size());
 	}
 
-	private Iterator<InflightMessage> iterator() {
-		return this.linkedMap.values().iterator();
+	private Iterator<InflightTXMessage> iterator() {
+		return this.txMessages.values().iterator();
 	}
 }

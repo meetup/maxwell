@@ -20,6 +20,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,6 +40,7 @@ public class RowMap implements Serializable {
 
 	static final Logger LOGGER = LoggerFactory.getLogger(RowMap.class);
 
+	private final int rowId;
 	private final String rowQuery;
 	private final String rowType;
 	private final String database;
@@ -60,6 +62,7 @@ public class RowMap implements Serializable {
 
 	private final List<String> pkColumns;
 
+    private static final AtomicInteger rowIdCounter = new AtomicInteger(1);
 	private static final JsonFactory jsonFactory = new JsonFactory();
 
 	private long approximateSize;
@@ -117,6 +120,8 @@ public class RowMap implements Serializable {
 	public RowMap(String type, String database, String table, Long timestampMillis, List<String> pkColumns,
 			Position nextPosition, String rowQuery) {
 		this.rowQuery = rowQuery;
+		rowIdCounter.compareAndSet(Integer.MAX_VALUE, 1);
+		this.rowId = rowIdCounter.getAndIncrement();
 		this.rowType = type;
 		this.database = database;
 		this.table = table;
@@ -133,6 +138,10 @@ public class RowMap implements Serializable {
 	public RowMap(String type, String database, String table, Long timestampMillis, List<String> pkColumns,
 				  Position nextPosition) {
 		this(type, database, table, timestampMillis, pkColumns, nextPosition, null);
+	}
+
+	public int getRowId() {
+		return rowId;
 	}
 
 	//Do we want to encrypt this part?

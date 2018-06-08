@@ -13,24 +13,26 @@ public abstract class AbstractAsyncProducer extends AbstractProducer {
 	public class CallbackCompleter {
 		private InflightMessageList inflightMessages;
 		private final MaxwellContext context;
-		private final Position position;
+		private final int rowId;
 		private final boolean isTXCommit;
 
-		public CallbackCompleter(InflightMessageList inflightMessages, Position position, boolean isTXCommit, MaxwellContext context) {
+		public CallbackCompleter(InflightMessageList inflightMessages, int rowId, boolean isTXCommit, MaxwellContext context) {
 			this.inflightMessages = inflightMessages;
 			this.context = context;
-			this.position = position;
+			this.rowId = rowId;
 			this.isTXCommit = isTXCommit;
 		}
 
 		public void markCompleted() {
 			if(isTXCommit) {
-				InflightMessageList.InflightMessage message = inflightMessages.completeMessage(position);
+				InflightMessageList.InflightTXMessage message = inflightMessages.completeTXMessage(rowId);
 
 				if (message != null) {
 					context.setPosition(message.position);
 					metricsTimer.update(message.timeSinceSendMS(), TimeUnit.MILLISECONDS);
 				}
+			} else {
+				inflightMessages.completeNonTXMessage(rowId);
 			}
 		}
 	}
@@ -51,24 +53,25 @@ public abstract class AbstractAsyncProducer extends AbstractProducer {
 
 	@Override
 	public final void push(RowMap r) throws Exception {
-		Position position = r.getPosition();
-		// Rows that do not get sent to a target will be automatically marked as complete.
-		// We will attempt to commit a checkpoint up to the current row.
-		if(!r.shouldOutput(outputConfig)) {
-			inflightMessages.addMessage(position);
-
-			InflightMessageList.InflightMessage completed = inflightMessages.completeMessage(position);
-			if(completed != null) {
-				context.setPosition(completed.position);
-			}
-			return;
-		}
-
 		if(r.isTXCommit()) {
-			inflightMessages.addMessage(position);
+			Position position = r.getPosition();
+
+			inflightMessages.addTXMessage(r.getRowId(), position);
+
+			// Rows that do not get sent to a target will be automatically marked as complete.
+			// We will attempt to commit a checkpoint up to the current row.
+			if(!r.shouldOutput(outputConfig)) {
+				InflightMessageList.InflightTXMessage completed = inflightMessages.completeTXMessage(r.getRowId());
+				if(completed != null) {
+					context.setPosition(completed.position);
+				}
+				return;
+			}
+		} else {
+			inflightMessages.addNonTXMessage(r.getRowId());
 		}
 
-		CallbackCompleter cc = new CallbackCompleter(inflightMessages, position, r.isTXCommit(), context);
+		CallbackCompleter cc = new CallbackCompleter(inflightMessages, r.getRowId(), r.isTXCommit(), context);
 
 		sendAsync(r, cc);
 	}
