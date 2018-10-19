@@ -203,7 +203,7 @@ class MaxwellKafkaProducerWorker extends AbstractAsyncProducer implements Runnab
 		/* if debug logging isn't enabled, release the reference to `value`, which can ease memory pressure somewhat */
 		String value = KafkaCallback.LOGGER.isDebugEnabled() ? record.value() : null;
 
-		KafkaCallback callback = new KafkaCallback(cc, r.getPosition(), record.key(), value,
+		KafkaCallback callback = new KafkaCallback(cc, r.getNextPosition(), record.key(), value,
 				this.succeededMessageCount, this.failedMessageCount, this.succeededMessageMeter, this.failedMessageMeter, this.context);
 
 		sendAsync(record, callback);
@@ -220,7 +220,13 @@ class MaxwellKafkaProducerWorker extends AbstractAsyncProducer implements Runnab
 		if (r instanceof DDLMap) {
 			record = new ProducerRecord<>(this.ddlTopic, this.ddlPartitioner.kafkaPartition(r, getNumPartitions(this.ddlTopic)), key, value);
 		} else {
-			String topic = generateTopic(this.topic, r);
+			String topic;
+
+			// javascript topic override
+			topic = r.getKafkaTopic();
+			if ( topic == null )
+				topic = generateTopic(this.topic, r);
+
 			record = new ProducerRecord<>(topic, this.partitioner.kafkaPartition(r, getNumPartitions(topic)), key, value);
 		}
 		return record;
@@ -236,6 +242,11 @@ class MaxwellKafkaProducerWorker extends AbstractAsyncProducer implements Runnab
 	@Override
 	public void awaitStop(Long timeout) throws TimeoutException {
 		taskState.awaitStop(thread, timeout);
+	}
+
+	// force-close for tests.
+	public void close() {
+		kafka.close();
 	}
 
 	@Override

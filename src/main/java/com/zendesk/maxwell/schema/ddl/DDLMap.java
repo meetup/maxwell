@@ -6,6 +6,7 @@ import com.zendesk.maxwell.producer.MaxwellOutputConfig;
 import com.zendesk.maxwell.replication.BinlogPosition;
 import com.zendesk.maxwell.replication.Position;
 import com.zendesk.maxwell.row.RowMap;
+import com.zendesk.maxwell.row.FieldNames;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -16,14 +17,16 @@ public class DDLMap extends RowMap {
 	private final ResolvedSchemaChange change;
 	private final Long timestamp;
 	private final String sql;
-	private Position nextPosition;
+	private Position position;
+	private final Long schemaId;
 
-	public DDLMap(ResolvedSchemaChange change, Long timestamp, String sql, Position nextPosition) {
-		super("ddl", change.databaseName(), change.tableName(), timestamp, new ArrayList<>(0), nextPosition);
+	public DDLMap(ResolvedSchemaChange change, Long timestamp, String sql, Position position, Position nextPosition, Long schemaId) {
+		super("ddl", change.databaseName(), change.tableName(), timestamp, new ArrayList<>(0), position, nextPosition, sql);
 		this.change = change;
 		this.timestamp = timestamp;
 		this.sql = sql;
-		this.nextPosition = nextPosition;
+		this.position = position;
+		this.schemaId = schemaId;
 	}
 
 	public String pkToJson(KeyFormat keyFormat) throws IOException {
@@ -38,30 +41,38 @@ public class DDLMap extends RowMap {
 		return toJSON(new MaxwellOutputConfig());
 	}
 
+	public Map<String, Object> getChangeMap() {
+		ObjectMapper mapper = new ObjectMapper();
+		return mapper.convertValue(change, new TypeReference<Map<String, Object>>() { });
+	}
+
 	@Override
 	public String toJSON(MaxwellOutputConfig outputConfig) throws IOException {
-
 		if(!outputConfig.outputDDL)
-		return null;
+			return null;
 
-		ObjectMapper mapper = new ObjectMapper();
+		Map<String, Object> map = getChangeMap();
+		map.put("ts", timestamp);
+		map.put("sql", sql);
 
-		Map<String, Object> changeMixin = mapper.convertValue(change, new TypeReference<Map<String, Object>>() { });
-		changeMixin.put("ts", timestamp);
-		changeMixin.put("sql", sql);
-		BinlogPosition binlogPosition = nextPosition.getBinlogPosition();
+		map.putAll(getExtraAttributes());
+
+		BinlogPosition binlogPosition = position.getBinlogPosition();
 		if ( outputConfig.includesBinlogPosition ) {
-			changeMixin.put("position", binlogPosition.getFile() + ":" + binlogPosition.getOffset());
+			map.put(FieldNames.POSITION, binlogPosition.getFile() + ":" + binlogPosition.getOffset());
 		}
 		if ( outputConfig.includesGtidPosition) {
-			changeMixin.put("gtid", binlogPosition.getGtid());
+			map.put(FieldNames.GTID, binlogPosition.getGtid());
 		}
-		return mapper.writeValueAsString(changeMixin);
+		if ( outputConfig.includesSchemaId) {
+			map.put(FieldNames.SCHEMA_ID, this.schemaId);
+		}
+		return new ObjectMapper().writeValueAsString(map);
 	}
 
 	@Override
 	public boolean shouldOutput(MaxwellOutputConfig outputConfig) {
-		return outputConfig.outputDDL;
+		return outputConfig.outputDDL && !this.suppressed;
 	}
 
 	public String getSql() {

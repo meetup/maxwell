@@ -131,18 +131,28 @@ public class MaxwellKinesisProducer extends AbstractAsyncProducer {
 		String key = this.partitioner.getKinesisKey(r);
 		String kinesisStream = this.kinesisStream != null ? this.kinesisStream : this.streamMapper.getStream(r);
 		String value = r.toJSON(outputConfig);
+		int vsize = value.length();
 
 		ByteBuffer encodedValue = ByteBuffer.wrap(value.getBytes("UTF-8"));
-		ListenableFuture<UserRecordResult> future = kinesisProducer.addUserRecord(kinesisStream, key, encodedValue);
 
 		// release the reference to ease memory pressure
 		if(!KinesisCallback.logger.isDebugEnabled()) {
 			value = null;
 		}
 
-		FutureCallback<UserRecordResult> callback = new KinesisCallback(cc, r.getPosition(), key, value,
+		FutureCallback<UserRecordResult> callback = new KinesisCallback(cc, r.getNextPosition(), key, value,
 				this.succeededMessageCount, this.failedMessageCount, this.succeededMessageMeter, this.failedMessageMeter, this.context);
 
-		Futures.addCallback(future, callback);
+		try {
+			ListenableFuture<UserRecordResult> future = kinesisProducer.addUserRecord(kinesisStream, key, encodedValue);
+			Futures.addCallback(future, callback);
+		} catch(IllegalArgumentException t) {
+			callback.onFailure(t);
+			logger.error("Database:" + r.getDatabase() + ", Table:" + r.getTable() + ", PK:" + r.pkAsConcatString() + ", Size:" + Integer.toString(vsize));
+		}
+	}
+
+	public void close() {
+		this.kinesisProducer.destroy();
 	}
 }

@@ -24,6 +24,7 @@ client_id                      | STRING               | unique text identifier f
 replica_server_id              | LONG                 | unique numeric identifier for this maxwell instance | 6379 (see [notes](#multiple-maxwell-instances))
 master_recovery                | BOOLEAN              | enable experimental master recovery code            | false
 gtid_mode                      | BOOLEAN              | enable GTID-based replication                       | false
+recapture_schema               | BOOLEAN              | recapture the latest schema. Not available in config.properties. | false
 &nbsp;
 replication_host               | STRING               | server to replicate from.  See [split server roles](#split-server-roles) | *schema-store host*
 replication_password           | STRING               | password on replication server                      | (none)
@@ -48,6 +49,7 @@ ignore_producer_error          | BOOLEAN              | Maxwell will be terminat
 &nbsp;
 **"file" producer options**
 output_file                    | STRING                              | output file for `file` producer                     |
+javascript                     | STRING                              | file containing javascript filters |
 &nbsp;
 **"kafka" producer options **
 kafka.bootstrap.servers        | STRING                              | kafka brokers, given as `HOST:PORT[,HOST:PORT]`     |
@@ -99,17 +101,12 @@ output_xoffset                 | BOOLEAN  | records include virtual tx-row offse
 output_nulls                   | BOOLEAN  | records include fields with NULL values    | true
 output_server_id               | BOOLEAN  | records include server_id                  | false
 output_thread_id               | BOOLEAN  | records include thread_id                  | false
+output_schema_id               | BOOLEAN  | records include schema_id, schema_id is the id of the latest schema tracked by maxwell and doesn't relate to any mysql tracked value                  | false
 output_row_query               | BOOLEAN  | records include INSERT/UPDATE/DELETE statement. Mysql option "binlog_rows_query_log_events" must be enabled | false
 output_ddl                     | BOOLEAN  | output DDL (table-alter, table-create, etc) events  | false
 &nbsp;
 **filtering**
-include_dbs                    | PATTERN           | only send updates from these databases |
-exclude_dbs                    | PATTERN           | ignore updates from these databases |
-include_tables                 | PATTERN           | only send updates from tables named like PATTERN |
-exclude_tables                 | PATTERN           | ignore updates from tables named like PATTERN |
-blacklist_dbs                  | PATTERN           | ignore updates AND schema changes from databases (see [warnings](#blacklisting-tables)) |
-blacklist_tables               | PATTERN           | ignore updates AND schema changes from tables named like PATTERN (see [warnings](#blacklisting-tables)) |
-include_column_values          | COL=val[,COL=val] | include only rows that match these values |
+filter                         | STRING            | filter rules, eg `exclude: db.*, include: *.tbl, include: *./bar(bar)?/, exclude: foo.bar.col=val` |
 &nbsp;
 **encryption**
 encrypt                        | [ none &#124; data &#124; all ]     | encrypt mode: none = no encryption. "data": encrypt the `data` field only. `all`: encrypt entire maxwell message | none
@@ -174,19 +171,10 @@ command line options > scoped env vars > properties file > default values
 
 #### config.properties
 
-If Maxwell finds the file `config.properties` in $PWD it will use it.  Any
-command line options (except `init_position`, `replay`, `kafka_version` and
-`daemon`) may be given as "key=value" pairs.
-
-Additionally, any configuration file options prefixed with 'kafka.' will be
-passed into the kafka producer library, after having 'kafka.' stripped off the
-front of the key.  So, for example if config.properties contains
-
-```
-kafka.batch.size=16384
-```
-
-then Maxwell will send `batch.size=16384` to the kafka producer library.
+Maxwell can be configured via a java properties file, specified via `--config`
+or named "config.properties" in the current working directory.
+Any command line options (except `init_position`, `replay`, `kafka_version` and
+`daemon`) may be specified as "key=value" pairs.
 
 #### via environment
 If `env_config_prefix` given via command line or in `config.properties`, Maxwell
@@ -273,37 +261,4 @@ With MySQL 5.5 and below, each replicator (be it mysql, maxwell, whatever) must
 also be configured with a unique `replica_server_id`.  This is a 32-bit integer
 that corresponds to mysql's `server_id` parameter.  The value you configure
 should be unique across all mysql and maxwell instances.
-
-### Filtering
-***
-#### Include/Exclude
-The options `include_dbs`, `exclude_dbs`, `include_tables`, and `exclude_tables` control whether
-Maxwell will send an update for a given row to its producer.  All the options take a single value PATTERN,
-which may either be a literal table/database name, given as `option=name`, or a regular expression,
-given as `option=/regex/`.  The options are evaluated as follows:
-
-1. only accept databases in `include_dbs` if non-empty
-1. reject databases in `exclude_dbs`
-1. only accept tables in `include_tables` if non-empty
-1. reject tables in `exclude_tables`
-
-So an example like `--include_dbs=/foo.*/ --exclude_tables=bar` will include `footy.zab` and exclude `footy.bar`
-
-#### Blacklisting tables
-
-In general, don't use this.
-
-The option `blacklist_tables` and `blacklist_dbs` controls whether Maxwell will send updates for a table to its producer AND whether
-it captures schema changes for that table or database. Note that once Maxwell has been running with a table or database marked as blacklisted,
-you *must* continue to run Maxwell with that table or database blacklisted or else Maxwell will halt. If you want to stop
-blacklisting a table or database, you will have to drop the maxwell schema first.
-
-#### Supressing columns
-
-If you wish to suppress columns from Maxwell's output (for instance, a password field),
-you can use `exclude_columns` to filter out columns by name.
-
-#### Filtering on column values
-Maxwell can filter rows to only match when a column contains a specific value.  The `include_column_values` option takes a comma-separated
-list of column/value pairs: "bar=x,foo=y".  Note that if a column does not exist in a table, it will ignore the value-filter.
 
