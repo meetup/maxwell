@@ -136,7 +136,7 @@ public class InflightMessageListTest {
 		assertThat("Should never exceed capacity", list.size(), is(capacity));
 
 		long wait = 500;
-		Thread.sleep(wait);
+		Thread.sleep(wait + 100);
 		list.completeTXMessage(1);
 
 		add.join();
@@ -153,7 +153,7 @@ public class InflightMessageListTest {
 		public void run() {
 			start = System.currentTimeMillis();
 			try {
-				list.addTXMessage(4, p4);
+				list.addTXMessage(4, p4, start);
 			} catch (InterruptedException e) {
 				e.printStackTrace();
 			}
@@ -167,8 +167,8 @@ public class InflightMessageListTest {
 		config.producerAckTimeout = timeout;
 		when(context.getConfig()).thenReturn(config);
 		list = new InflightMessageList(context, capacity, completePercentageThreshold);
-		list.addTXMessage(1, p1);
-		list.addTXMessage(2, p2);
-		list.addTXMessage(3, p3);
+		list.addTXMessage(1, p1, 0L);
+		list.addTXMessage(2, p2, 0L);
+		list.addTXMessage(3, p3, 0L);
 	}
 }

@@ -20,57 +20,6 @@ public class RowMapTest {
 	private static final Position POSITION = new Position(new BinlogPosition(1L, "binlog-0001"), 0L);
 
 
-	@Test
-	public void testGetDataMaps() throws Exception {
-		RowMap rowMap = new RowMap("insert", "MyDatabase", "MyTable", 1234567890L, new ArrayList<String>(), null);
-		rowMap.putData("foo", "bar");
-		rowMap.putOldData("fiz", "buz");
-
-		// Sanity check.
-		Assert.assertEquals("bar", rowMap.getData("foo"));
-		Assert.assertEquals("buz", rowMap.getOldData("fiz"));
-
-		// Get data maps.
-		LinkedHashMap<String, Object> data = rowMap.getData();
-		LinkedHashMap<String, Object> oldData = rowMap.getOldData();
-		Assert.assertEquals("bar", data.get("foo"));
-		Assert.assertEquals("buz", oldData.get("fiz"));
-
-		// Manipulate data maps extracted from RowMap.
-		data.put("foo", "BAR");
-		oldData.put("fiz", "BUZ");
-
-		// Another sanity check.
-		Assert.assertEquals("BAR", data.get("foo"));
-		Assert.assertEquals("BUZ", oldData.get("fiz"));
-
-		// Assert original RowMap data was not changed.
-		Assert.assertEquals("bar", rowMap.getData("foo"));
-		Assert.assertEquals("buz", rowMap.getOldData("fiz"));
-	}
-
-	@Test
-	public void testGetExtraAttributesMaps() throws Exception {
-		RowMap rowMap = new RowMap("insert", "MyDatabase", "MyTable", 1234567890L, new ArrayList<String>(), null);
-		rowMap.putExtraAttribute("foo", "bar");
-
-		// Sanity check.
-		Assert.assertEquals("bar", rowMap.getExtraAttribute("foo"));
-
-		// Get extra attributes map.
-		LinkedHashMap<String, Object> extraAttributes = rowMap.getExtraAttributes();
-		Assert.assertEquals("bar", extraAttributes.get("foo"));
-
-		// Manipulate extra attributes map extracted from RowMap.
-		extraAttributes.put("foo", "BAR");
-
-		// Another sanity check.
-		Assert.assertEquals("BAR", extraAttributes.get("foo"));
-
-		// Assert original extra RowMap attributes was not changed.
-		Assert.assertEquals("bar", rowMap.getExtraAttribute("foo"));
-	}
-
 	@Test(expected = ProtectedAttributeNameException.class)
 	public void testFailOnProtectedAttributes() throws Exception {
 		RowMap rowMap = new RowMap("insert", "MyDatabase", "MyTable", 1234567890L, new ArrayList<String>(), null);
@@ -230,6 +179,7 @@ public class RowMapTest {
 
 		rowMap.setServerId(7653213L);
 		rowMap.setThreadId(6532312L);
+		rowMap.setSchemaId(298L);
 
 		rowMap.putExtraAttribute("int", 1234);
 		rowMap.putExtraAttribute("str", "foo");
@@ -237,14 +187,15 @@ public class RowMapTest {
 		rowMap.putData("id", "9001");
 		rowMap.putData("first_name", "foo");
 		rowMap.putData("last_name", "bar");
-        rowMap.putData("rawJSON", new RawJSONString("{\"UserID\":20}"));
+		rowMap.putData("rawJSON", new RawJSONString("{\"UserID\":20}"));
 
 		MaxwellOutputConfig outputConfig = getMaxwellOutputConfig();
 
 		Assert.assertEquals("{\"database\":\"MyDatabase\",\"table\":\"MyTable\",\"type\":\"insert\"," +
 				"\"ts\":1496712943,\"position\":\"binlog-0001:1\",\"gtid\":null,\"server_id\":7653213," +
-				"\"thread_id\":6532312,\"int\":1234,\"str\":\"foo\",\"data\":{\"id\":\"9001\",\"first_name\":\"foo\"," +
-				"\"last_name\":\"bar\",\"rawJSON\":{\"UserID\":20}}}", rowMap.toJSON(outputConfig));
+				"\"thread_id\":6532312,\"schema_id\":298,\"int\":1234,\"str\":\"foo\",\"data\":" +
+				"{\"id\":\"9001\",\"first_name\":\"foo\",\"last_name\":\"bar\",\"rawJSON\":{\"UserID\":20}}}",
+				rowMap.toJSON(outputConfig));
 
 	}
 
@@ -255,6 +206,7 @@ public class RowMapTest {
 
 		rowMap.setServerId(7653213L);
 		rowMap.setThreadId(6532312L);
+		rowMap.setSchemaId(298L);
 
 		rowMap.putExtraAttribute("int", 1234);
 		rowMap.putExtraAttribute("str", "foo");
@@ -268,7 +220,7 @@ public class RowMapTest {
 
 		Assert.assertEquals("{\"database\":\"MyDatabase\",\"table\":\"MyTable\",\"type\":\"insert\"," +
 				"\"ts\":1496712943,\"position\":\"binlog-0001:1\",\"gtid\":null,\"server_id\":7653213," +
-				"\"thread_id\":6532312,\"int\":1234,\"str\":\"foo\",\"data\":{\"id\":\"9001\"," +
+				"\"thread_id\":6532312,\"schema_id\":298,\"int\":1234,\"str\":\"foo\",\"data\":{\"id\":\"9001\"," +
 				"\"interests\":[\"hiking\",\"programming\"]}}", rowMap.toJSON(outputConfig));
 	}
 
@@ -280,6 +232,7 @@ public class RowMapTest {
 		outputConfig.includesGtidPosition = true;
 		outputConfig.includesServerId = true;
 		outputConfig.includesThreadId = true;
+		outputConfig.includesSchemaId = true;
 		outputConfig.includesNulls = true;
 		outputConfig.excludeColumns = Arrays.asList(patterns);
 

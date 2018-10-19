@@ -3,7 +3,10 @@ package com.zendesk.maxwell;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.*;
+import java.util.function.Consumer;
 
+import com.zendesk.maxwell.filtering.Filter;
+import com.zendesk.maxwell.filtering.InvalidFilterException;
 import com.zendesk.maxwell.producer.MaxwellOutputConfig;
 import com.zendesk.maxwell.replication.MysqlVersion;
 import com.zendesk.maxwell.replication.Position;
@@ -31,53 +34,83 @@ public class MaxwellTestWithIsolatedServer extends TestWithNameLogging {
 		MaxwellTestSupport.setupSchema(server);
 	}
 
-	protected List<RowMap> getRowsForSQL(MaxwellFilter filter, String[] input) throws Exception {
-		return MaxwellTestSupport.getRowsWithReplicator(server, filter, input, null);
-	}
-
-	protected List<RowMap> getRowsForSQL(MaxwellFilter filter, String[] input, String[] before) throws Exception {
-		return MaxwellTestSupport.getRowsWithReplicator(server, filter, input, before);
+	protected List<RowMap> getRowsForSQL(Filter filter, String[] input) throws Exception {
+		return getRowsForSQL(filter, input, null);
 	}
 
 	protected List<RowMap> getRowsForSQL(String[] input) throws Exception {
-		return MaxwellTestSupport.getRowsWithReplicator(server, null, input, null);
+		return getRowsForSQL(null, input, null);
 	}
 
-	protected List<RowMap> getRowsForSQLTransactional(final String[] input) throws Exception {
-		return getRowsForSQLTransactional(input, null, null);
-	}
-
-	protected List<RowMap> getRowsForSQLTransactional(final String[] input, MaxwellFilter filter, MaxwellOutputConfig outputConfig) throws Exception {
-		MaxwellTestSupportCallback callback = new MaxwellTestSupportCallback() {
-			@Override
-			public void afterReplicatorStart(MysqlIsolatedServer mysql) throws SQLException {
-				Connection c = mysql.getNewConnection();
-				c.setAutoCommit(false);
-				for (String s : input) {
-					c.createStatement().execute(s);
-				}
-				c.commit();
+	protected List<RowMap> getRowsForSQL(Filter filter, String[] input, String[] before) throws Exception {
+		return MaxwellTestSupport.getRowsWithReplicator(server, input, before, (config) -> {
+			if ( filter != null ) {
+				try {
+					filter.addRule("include: test.*");
+				} catch (InvalidFilterException e) { }
 			}
-		};
-		return MaxwellTestSupport.getRowsWithReplicator(server, filter, callback, outputConfig);
+
+			config.filter = filter;
+		});
 	}
 
-	protected List<RowMap> getRowsForDDLTransaction(String[] sql, MaxwellFilter filter) throws Exception {
-		MaxwellOutputConfig outputConfig = new MaxwellOutputConfig();
-		outputConfig.outputDDL = true;
-		return getRowsForSQLTransactional(sql, filter, outputConfig);
+	final int HUGE_NUM_DBS = 1000;
+	final int HUGE_NUM_TABLES = 200;
+
+	protected void generateHugeSchema() throws Exception {
+		for ( int i = 0 ; i < HUGE_NUM_DBS; i++ ) {
+			String dbName = "huge_test_" + i;
+			server.execute("create database " + dbName);
+			for ( int j = 0; j < HUGE_NUM_TABLES; j++) {
+				server.executeCached("create table " + dbName + ".huge_tbl_" + j + "("
+					+ "intcol" + j + " int NOT NULL PRIMARY KEY AUTO_INCREMENT, "
+					+ "strcol" + j + " varchar(255), "
+					+ "othercol" + j + " text"
+					+ ")");
+
+			}
+			long nGenerated = (i + 1) * HUGE_NUM_TABLES;
+			System.out.println("generated " + nGenerated + " of " + (HUGE_NUM_DBS * HUGE_NUM_TABLES) + " tables");
+		}
+	}
+
+
+	private class MaxwellTestSupportTXCallback extends MaxwellTestSupportCallback {
+		private final String[] input;
+
+		public MaxwellTestSupportTXCallback(final String[] input) {
+			this.input = input;
+		}
+
+		@Override
+		public void afterReplicatorStart(MysqlIsolatedServer mysql) throws SQLException {
+			Connection c = mysql.getNewConnection();
+			c.setAutoCommit(false);
+			for (String s : input) {
+				c.createStatement().execute(s);
+			}
+			c.commit();
+		}
+	}
+	protected List<RowMap> getRowsForSQLTransactional(final String[] input) throws Exception {
+		MaxwellTestSupportTXCallback cb = new MaxwellTestSupportTXCallback(input);
+		return MaxwellTestSupport.getRowsWithReplicator(server, cb, null);
+	}
+    protected List<RowMap> getRowsForDDLTransaction(String[] input, Filter filter) throws Exception {
+		MaxwellTestSupportTXCallback cb = new MaxwellTestSupportTXCallback(input);
+		return MaxwellTestSupport.getRowsWithReplicator(server, cb, (config) -> {
+			config.outputConfig = new MaxwellOutputConfig();
+			config.outputConfig.outputDDL = true;
+			config.filter = filter;
+		});
 	}
 
 	protected void runJSON(String filename) throws Exception {
-		MaxwellTestJSON.runJSONTestFile(server, filename, null, null);
+		MaxwellTestJSON.runJSONTestFile(server, filename, null);
 	}
 
-	protected void runJSON(String filename, MaxwellFilter filter) throws Exception {
-		MaxwellTestJSON.runJSONTestFile(server, filename, filter, null);
-	}
-
-	protected void runJSON(String filename, MaxwellOutputConfig outputConfig) throws Exception {
-		MaxwellTestJSON.runJSONTestFile(server, filename, null, outputConfig);
+	protected void runJSON(String filename, Consumer<MaxwellConfig> configLambda) throws Exception {
+		MaxwellTestJSON.runJSONTestFile(server, filename, configLambda);
 	}
 
 	protected MaxwellContext buildContext() throws Exception {
@@ -88,20 +121,22 @@ public class MaxwellTestWithIsolatedServer extends TestWithNameLogging {
 		return MaxwellTestSupport.buildContext(server.getPort(), p, null);
 	}
 
-	protected MaxwellFilter excludeTable(String name) throws MaxwellInvalidFilterException {
-		MaxwellFilter filter = new MaxwellFilter();
-		filter.excludeTable(name);
+	protected Filter excludeTable(String name) throws InvalidFilterException {
+		Filter filter = new Filter("exclude: *." + name);
 		return filter;
 	}
 
-	protected MaxwellFilter excludeDb(String name) throws MaxwellInvalidFilterException {
-		MaxwellFilter filter = new MaxwellFilter();
-		filter.excludeDatabase(name);
+	protected Filter excludeDb(String name) throws InvalidFilterException {
+		Filter filter = new Filter("exclude: " + name + ".*");
 		return filter;
 	}
 
 	protected void requireMinimumVersion(MysqlVersion minimum) {
 		// skips this test if running an older MYSQL version
 		assumeTrue(server.getVersion().atLeast(minimum));
+	}
+
+	protected void requireMinimumVersion(int major, int minor) {
+		requireMinimumVersion(new MysqlVersion(major, minor));
 	}
 }

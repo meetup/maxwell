@@ -8,6 +8,7 @@ package com.zendesk.maxwell.producer;
 
 import com.zendesk.maxwell.MaxwellContext;
 import com.zendesk.maxwell.replication.Position;
+import com.zendesk.maxwell.row.RowMap;
 
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -19,11 +20,13 @@ public class InflightMessageList {
 		public final Position position;
 		public boolean isComplete;
 		public final long sendTimeMS;
+		public final long eventTimeMS;
 
-		InflightTXMessage(Position p) {
+		InflightTXMessage(Position p, long eventTimeMS) {
 			this.position = p;
 			this.isComplete = false;
 			this.sendTimeMS = System.currentTimeMillis();
+			this.eventTimeMS = eventTimeMS;
 		}
 
 		long timeSinceSendMS() {
@@ -55,16 +58,16 @@ public class InflightMessageList {
 		this.txMessages = new LinkedHashMap<>();
 		this.nonTXMessages = new LinkedHashSet<>();
 		this.capacity = capacity;
-        this.nonTXCapacity = capacity * 100;
+		this.nonTXCapacity = capacity * 100;
 	}
 
-	public void addTXMessage(int rowId, Position p) throws InterruptedException {
+	public void addTXMessage(int rowId, Position p, long eventTimestampMillis) throws InterruptedException {
 		synchronized (this.txMessages) {
 			while (isFullTX) {
 				this.txMessages.wait();
 			}
 
-			InflightTXMessage m = new InflightTXMessage(p);
+			InflightTXMessage m = new InflightTXMessage(p, eventTimestampMillis);
 			this.txMessages.put(rowId, m);
 
 			if (txMessages.size() >= capacity) {
