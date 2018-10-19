@@ -1,5 +1,70 @@
 # Maxwell changelog
 
+### [v1.18.0](https://github.com/zendesk/maxwell/releases/tag/v1.18.0): "hello from the Andes"
+
+
+- memory optimizations for large schemas (especially shareded schemas with lots of duplicates)
+- add support for an http endpoint to support Prometheus metrics
+- allow javascript filters to access the row query object
+- javascript filters now run in the bootstrap process
+- support for non-latin1 column names
+- add `--output_schema_id` option
+- better handling of packet-too-big errors from Kinesis
+- add message.publish.age metric
+
+
+### [v1.17.1](https://github.com/zendesk/maxwell/releases/tag/v1.17.1): "ay, ay, ay"
+
+
+- fix a regression around filters + bootstrapping
+- fix a regression around filters + database-only-ddl
+
+
+### [v1.17.0](https://github.com/zendesk/maxwell/releases/tag/v1.17.0): "monday, not sunday tuesday"
+
+
+v1.17.0 brings a new level of configurability by allowing you to inject
+a bit of javascript into maxwell's processing.  Should be useful!  Also:
+
+- fix regression for Alibaba RDS tables
+
+
+### [v1.16.1](https://github.com/zendesk/maxwell/releases/tag/v1.16.1): "the 90 degree angle thing"
+
+
+- Fix Bootstrapping for JSON columns
+- add --recapture_schema flag for when ya wanna start over
+- add kafka 1.0 libraries, make them default
+
+
+### [v1.16.0](https://github.com/zendesk/maxwell/releases/tag/v1.16.0): "kind of sort of a reference to something"
+
+
+v1.16.0 brings a rewrite of Maxwell's filtering system, giving it a
+concise list of rules that are executed in sequence.  It's now possible
+to exclude tables from a particular database, exclude columns matching a
+value, and probably some other use cases.
+See http://maxwells-daemon.io/config/#filtering for details.
+
+
+### [v1.15.0](https://github.com/zendesk/maxwell/releases/tag/v1.15.0): "I'm sure I'm being supportive here."
+
+
+This is a bug-fix release, but it's big enough I'm giving it a minor
+version.
+
+- Fix a very old bug in which DDL rows were writing the *start* of the
+row into `maxwell.positions`, leading to chaos in some scenarios where
+maxwell managed to stop on the row and double-process it, as well as to
+a few well-meaning patches.
+- Fix the fact that maxwell was outputting "next-position" instead of
+"position" of a row into JSON.
+- Fix the master-recovery code to store schema that corresponds to the
+start of a row, and points the replicator at the next-position.
+
+Much thanks to Tim, Likun and others in sorting this mess out.
+
+
 ### [v1.14.7](https://github.com/zendesk/maxwell/releases/tag/v1.14.7): "casamir pulaski day"
 
 

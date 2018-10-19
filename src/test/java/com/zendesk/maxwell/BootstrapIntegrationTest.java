@@ -1,5 +1,6 @@
 package com.zendesk.maxwell;
 
+import com.zendesk.maxwell.filtering.Filter;
 import com.zendesk.maxwell.producer.EncryptionMode;
 import com.zendesk.maxwell.producer.MaxwellOutputConfig;
 import com.zendesk.maxwell.row.RowMap;
@@ -40,15 +41,27 @@ public class BootstrapIntegrationTest extends MaxwellTestWithIsolatedServer {
 	}
 
 	@Test
+	public void testJSONType() throws Exception {
+		requireMinimumVersion(server.VERSION_5_7);
+		runJSON("json/bootstrap-json-type");
+	}
+
+	@Test
 	public void testBootstrapIsWhitelisted() throws Exception {
-		MaxwellFilter filter = new MaxwellFilter();
-		filter.includeDatabase("shard_1");
-		runJSON("json/bootstrap-whitelist", filter);
+		final Filter filter = new Filter();
+		filter.addRule("exclude: *.*, include: shard_1.*");
+		runJSON("json/bootstrap-whitelist", (c) -> c.filter = filter);
 	}
 
 	@Test
 	public void testBootstrapNullValues() throws Exception {
 		runJSON("json/bootstrap-null-values");
+	}
+
+	@Test
+	public void testBootstrapJSFilters() throws Exception {
+		String dir = MaxwellTestSupport.getSQLDir();
+		runJSON("json/bootstrap-js-filters", (c) -> c.javascriptFile = dir + "/json/filter.javascript");
 	}
 
 	@Test

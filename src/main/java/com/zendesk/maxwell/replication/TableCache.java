@@ -2,18 +2,23 @@ package com.zendesk.maxwell.replication;
 
 import java.util.HashMap;
 
-import com.zendesk.maxwell.MaxwellFilter;
+import com.zendesk.maxwell.filtering.Filter;
 import com.zendesk.maxwell.schema.Database;
 import com.zendesk.maxwell.schema.Schema;
 import com.zendesk.maxwell.schema.Table;
 
 public class TableCache {
+	private final String maxwellDB;
+
+	public TableCache(String maxwellDB) {
+		this.maxwellDB = maxwellDB;
+	}
 	private final HashMap<Long, Table> tableMapCache = new HashMap<>();
 	private final HashMap<Long, String> blacklistedTableCache = new HashMap<>();
 
-	public void processEvent(Schema schema, MaxwellFilter filter, Long tableId, String dbName, String tblName) {
+	public void processEvent(Schema schema, Filter filter, Long tableId, String dbName, String tblName) {
 		if ( !tableMapCache.containsKey(tableId) ) {
-			if ( filter != null && filter.isTableBlacklisted(dbName, tblName) ) {
+			if ( Filter.isTableBlacklisted(filter, dbName, tblName) && !Filter.isSystemWhitelisted(maxwellDB, dbName, tblName)) {
 				blacklistedTableCache.put(tableId, tblName);
 				return;
 			}

@@ -55,14 +55,13 @@ public class SchemaCapturer {
 				"ORDINAL_POSITION, " +
 				"COLUMN_TYPE, " +
 				dateTimePrecision +
-				"COLUMN_KEY, " +
-				"COLUMN_TYPE " +
-				"FROM `information_schema`.`COLUMNS` WHERE TABLE_SCHEMA = ?";
+				"COLUMN_KEY " +
+				"FROM `information_schema`.`COLUMNS` WHERE TABLE_SCHEMA = ? ORDER BY TABLE_NAME, ORDINAL_POSITION";
 
 		columnPreparedStatement = connection.prepareStatement(columnSql);
 
 		String pkSql = "SELECT TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION FROM information_schema.KEY_COLUMN_USAGE "
-				+ "WHERE CONSTRAINT_NAME = 'PRIMARY' AND TABLE_SCHEMA = ?";
+				+ "WHERE CONSTRAINT_NAME = 'PRIMARY' AND TABLE_SCHEMA = ? ORDER BY TABLE_NAME, ORDINAL_POSITION";
 
 		pkPreparedStatement = connection.prepareStatement(pkSql);
 
@@ -78,7 +77,7 @@ public class SchemaCapturer {
 		ArrayList<Database> databases = new ArrayList<>();
 
 		ResultSet rs = connection.createStatement().executeQuery(
-				"SELECT SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME FROM INFORMATION_SCHEMA.SCHEMATA"
+				"SELECT SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME FROM INFORMATION_SCHEMA.SCHEMATA ORDER BY SCHEMA_NAME"
 		);
 		while (rs.next()) {
 			String dbName = rs.getString("SCHEMA_NAME");
@@ -162,7 +161,7 @@ public class SchemaCapturer {
 				String colName = r.getString("COLUMN_NAME");
 				String colType = r.getString("DATA_TYPE");
 				String colEnc = r.getString("CHARACTER_SET_NAME");
-				int colPos = r.getInt("ORDINAL_POSITION") - 1;
+				short colPos = (short) (r.getInt("ORDINAL_POSITION") - 1);
 				boolean colSigned = !r.getString("COLUMN_TYPE").matches(".* unsigned$");
 				Long columnLength = null;
 

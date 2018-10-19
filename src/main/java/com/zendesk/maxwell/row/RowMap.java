@@ -1,6 +1,5 @@
 package com.zendesk.maxwell.row;
 
-import com.fasterxml.jackson.core.*;
 import com.zendesk.maxwell.errors.ProtectedAttributeNameException;
 import com.zendesk.maxwell.producer.EncryptionMode;
 import com.zendesk.maxwell.replication.BinlogPosition;
@@ -21,37 +20,33 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonGenerator;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.zendesk.maxwell.errors.ProtectedAttributeNameException;
-import com.zendesk.maxwell.producer.EncryptionMode;
-import com.zendesk.maxwell.producer.MaxwellOutputConfig;
-import com.zendesk.maxwell.replication.BinlogPosition;
-import com.zendesk.maxwell.replication.Position;
 
 
 public class RowMap implements Serializable {
+
 	public enum KeyFormat { HASH, ARRAY }
 
 	static final Logger LOGGER = LoggerFactory.getLogger(RowMap.class);
 
-	private final String rowQuery;
+	private String rowQuery;
 	private final String rowType;
 	private final String database;
 	private final String table;
 	private final Long timestampMillis;
 	private final Long timestampSeconds;
+	private final Position position;
 	private Position nextPosition;
+	private String kafkaTopic;
+	protected boolean suppressed;
 
 	private Long xid;
 	private Long xoffset;
 	private boolean txCommit;
 	private Long serverId;
 	private Long threadId;
+	private Long schemaId;
 
 	private final LinkedHashMap<String, Object> data;
 	private final LinkedHashMap<String, Object> oldData;
@@ -115,7 +110,7 @@ public class RowMap implements Serializable {
 			};
 
 	public RowMap(String type, String database, String table, Long timestampMillis, List<String> pkColumns,
-			Position nextPosition, String rowQuery) {
+			Position position, Position nextPosition, String rowQuery) {
 		this.rowQuery = rowQuery;
 		this.rowType = type;
 		this.database = database;
@@ -125,9 +120,16 @@ public class RowMap implements Serializable {
 		this.data = new LinkedHashMap<>();
 		this.oldData = new LinkedHashMap<>();
 		this.extraAttributes = new LinkedHashMap<>();
+		this.position = position;
 		this.nextPosition = nextPosition;
 		this.pkColumns = pkColumns;
+		this.suppressed = false;
 		this.approximateSize = 100L; // more or less 100 bytes of overhead
+	}
+
+	public RowMap(String type, String database, String table, Long timestampMillis, List<String> pkColumns,
+				  Position nextPosition, String rowQuery) {
+		this(type, database, table, timestampMillis, pkColumns, nextPosition, nextPosition, rowQuery);
 	}
 
 	public RowMap(String type, String database, String table, Long timestampMillis, List<String> pkColumns,
@@ -333,10 +335,9 @@ public class RowMap implements Serializable {
 				g.writeBooleanField(outputConfig.prefixString + FieldNames.COMMIT, true);
 		}
 
-		BinlogPosition binlogPosition = this.nextPosition.getBinlogPosition();
+		BinlogPosition binlogPosition = this.position.getBinlogPosition();
 		if ( outputConfig.includesBinlogPosition )
 			g.writeStringField(outputConfig.prefixString + FieldNames.POSITION, binlogPosition.getFile() + ":" + binlogPosition.getOffset());
-
 
 		if ( outputConfig.includesGtidPosition)
 			g.writeStringField(outputConfig.prefixString + FieldNames.GTID, binlogPosition.getGtid());
@@ -347,6 +348,10 @@ public class RowMap implements Serializable {
 
 		if ( outputConfig.includesThreadId && this.threadId != null ) {
 			g.writeNumberField(outputConfig.prefixString + FieldNames.THREAD_ID, this.threadId);
+		}
+
+		if ( outputConfig.includesSchemaId && this.schemaId != null ) {
+			 g.writeNumberField(FieldNames.SCHEMA_ID, this.schemaId);
 		}
 
 		for ( Map.Entry<String, Object> entry : this.extraAttributes.entrySet() ) {
@@ -464,9 +469,8 @@ public class RowMap implements Serializable {
 		this.approximateSize += approximateKVSize(key, value);
 	}
 
-	public Position getPosition() {
-		return nextPosition;
-	}
+	public Position getNextPosition() { return nextPosition; }
+	public Position getPosition() { return position; }
 
 	public Long getXid() {
 		return xid;
@@ -508,6 +512,14 @@ public class RowMap implements Serializable {
 		this.threadId = threadId;
 	}
 
+	public Long getSchemaId() {
+		return schemaId;
+	}
+
+	public void setSchemaId(Long schemaId) {
+		this.schemaId = schemaId;
+	}
+
 	public String getDatabase() {
 		return database;
 	}
@@ -532,6 +544,10 @@ public class RowMap implements Serializable {
 		return rowQuery;
 	}
 
+	public void setRowQuery(String query) {
+		this.rowQuery = query;
+	}
+
 	public String getRowType() {
 		return this.rowType;
 	}
@@ -540,21 +556,32 @@ public class RowMap implements Serializable {
 	// override this for extended classes that don't output a value
 	// return false when there is a heartbeat row or other row with suppressed output
 	public boolean shouldOutput(MaxwellOutputConfig outputConfig) {
-		return true;
+		return !suppressed;
 	}
 
 	public LinkedHashMap<String, Object> getData()
 	{
-		return new LinkedHashMap<>(data);
+		return data;
 	}
 
 	public LinkedHashMap<String, Object> getExtraAttributes()
 	{
-		return new LinkedHashMap<>(extraAttributes);
+		return extraAttributes;
 	}
 
 	public LinkedHashMap<String, Object> getOldData()
 	{
-		return new LinkedHashMap<>(oldData);
+		return oldData;
+	}
+
+	public void suppress() {
+		this.suppressed = true;
+	}
+
+	public String getKafkaTopic() {
+		return this.kafkaTopic;
+	}
+	public void setKafkaTopic(String topic) {
+		this.kafkaTopic = topic;
 	}
 }
