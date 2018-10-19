@@ -24,10 +24,10 @@ public class MaxwellKinesisProducerTest {
 	public void dealsWithTooLargeRecord() throws Exception {
 		MaxwellContext context = mock(MaxwellContext.class);
 		MaxwellConfig config = new MaxwellConfig();
+		config.kinesisStream = "test-stream";
 		when(context.getConfig()).thenReturn(config);
 		when(context.getMetrics()).thenReturn(new NoOpMetrics());
-		String kinesisStream = "test-stream";
-		MaxwellKinesisProducer producer = new MaxwellKinesisProducer(context, kinesisStream);
+		MaxwellKinesisProducer producer = new MaxwellKinesisProducer(context);
 
 		RowMap rowMap = new RowMap("insert", "MyDatabase", "MyTable", TIMESTAMP_MILLISECONDS, new ArrayList<String>(), POSITION);
 		StringBuilder r = new StringBuilder();
